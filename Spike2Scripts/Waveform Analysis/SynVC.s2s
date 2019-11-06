@@ -1,0 +1,190 @@
+'Modification of "XI_IVcurve", specifically for synaptic currents from VC expts.
+'Asks for two multisweep XY views holding the command and response sweeps.
+'You mark with cursors 1) baseline region, 2) peak region, and 3) steady state region.
+
+'Dirk Bucher and Ayanna Bryan, Dec 2010.
+
+
+' get the number of views
+var nViews%;  ' will store the number of views
+var viewList%[256];  ' list of views
+const XYViewsOnlyMagicNumber := 4096;
+nViews%:=Viewlist(viewList%[],XYViewsOnlyMagicNumber);
+if nViews%<2 then
+Message("you need 2 XYviews!");
+halt
+endif
+
+' get the view titles
+var title$[256];  ' have to pre-allocate all arrays in Spike2 (stupid)
+var k%;  ' a counter
+for k% := 1 to nViews% do
+  Frontview (viewList%[k%]);
+  title$[k%]:=WindowTitle$();
+next
+
+' bring up the dialog box that lets the user choose what views to use for command, response
+DlgCreate("Assign Files");
+DlgText("command:", 3,2);
+DlgList(1, 40, title$[1:nViews%],100,3,3);
+DlgText("response:",3,4);
+DlgList(2, 40, title$[1:nViews%],100,3,5);
+var ok%;  ' to store whether dialog box was ok'ed or cancelled
+var cmdTitleInd%, rspTitleInd%;  ' to store user answers
+ok% := DlgShow(cmdTitleInd%, rspTitleInd%);
+
+' make sure the dialog box wasn't cancelled
+if ok%=0 then halt endif
+
+' extract the command, response window titles
+var cmdTitle$, rspTitle$;  ' titles of the command, response windows
+cmdTitle$ := title$[cmdTitleInd%+1]; 
+rspTitle$ := title$[rspTitleInd%+1];
+
+' convert the title strings to view handles
+var cmdView%, rspView%;
+cmdView% := ViewFind(cmdTitle$);
+rspView% := ViewFind(rspTitle$);
+
+' bring the response view to the fore
+
+FrontView(rspView%);
+WindowSize(100,95);
+Window(0,0);
+
+CursorSet(0);
+CursorSet(6);
+CursorLabel(4,1,"base start");
+CursorLabel(4,2,"base end");
+CursorLabel(4,3,"peak start");
+CursorLabel(4,4,"peak end");
+cursorlabel(4,5,"end start");
+CursorLabel(4,6,"end end");
+CursorLabelPos(1,90);
+CursorLabelPos(2,90);
+CursorLabelPos(3,90);
+CursorLabelPos(4,90);
+CursorLabelPos(5,90);
+CursorLabelPos(6,90);
+
+
+Interact("set cursors", 384,0,"OK");
+  
+Printlog("V_hold [mV], I_hold [nA], V_step [mV], peak current [nA], peak amp [nA], ttp [ms], end current [nA]\n");
+
+' get the data from the current view
+var x[1000000], y[1000000];
+var n%;  ' number of data points in x, y
+n% := XYGetData(1, x[], y[]);
+
+' get the duration, time-step of the data
+var t0, tf, T, dt;
+t0 := x[0];
+tf := x[n%-1];
+T := tf-t0;
+dt := T/(n%-1);
+
+' want to save the cursor times for later
+var cursorTime[6];
+for k%:=0 to 5 do
+  cursorTime[k%] := Cursor(k%+1);
+next
+
+' convert cursor x values to indices
+var cursorInd[6];  ' cursorInd[j] gives the position in the data arrays of the jth cursor
+for k%:=0 to 5 do
+  cursorInd[k%]:=Round((CursorTime[k%]-t0)/dt);
+next
+
+var cur1%,cur2%,cur3%,cur4%,cur5%,cur6%;
+cur1%:=cursorInd[0];
+cur2%:=cursorInd[1];
+cur3%:=cursorInd[2];
+cur4%:=cursorInd[3];
+cur5%:=cursorInd[4];
+cur6%:=cursorInd[5];
+
+FrontView(cmdView%);
+
+' get the data from the current view
+var xc[1000000], yc[1000000];
+var nc%;  ' number of data points in x, y
+nc% := XYGetData(1, xc[], yc[]);
+
+' get the duration, time-step of the data
+var t0c, tfc, Tc, dtc;
+t0c := xc[0];
+tfc := xc[nc%-1];
+Tc := tfc-t0c;
+dtc := Tc/(nc%-1);
+
+FrontView(rspView%);
+' want to save the cursor times for later
+var cursorTimec[6];
+for k%:=0 to 5 do
+  cursorTimec[k%] := Cursor(k%+1);
+next
+
+' convert cursor x values to indices
+var cursorIndc[6];  ' cursorInd[j] gives the position in the data arrays of the jth cursor
+for k%:=0 to 5 do
+  cursorIndc[k%]:=Round((CursorTimec[k%]-t0c)/dtc);
+next
+
+var cur1c%,cur2c%,cur3c%,cur4c%,cur5c%,cur6c%;
+cur1c%:=cursorIndc[0];
+cur2c%:=cursorIndc[1];
+cur3c%:=cursorIndc[2];
+cur4c%:=cursorIndc[3];
+cur5c%:=cursorIndc[4];
+cur6c%:=cursorIndc[5];
+
+
+var channels%[256];  ' list of channels
+var nChan%;  ' number of channels
+nChan% := ChanList(channels%[]); 
+
+var length%, holdV, StepV, StepT, holdC, endC, amplitude, peak, peakInd%, peakT;
+
+for k% := 1 to nChan% do
+    
+    FrontView(cmdView%);
+    ArrMul(xc[],0);
+    ArrMul(yc[],0);
+    XYGetData(channels%[k%], xc[], yc[]);
+    length%:=cur2c%-cur1c%;
+    ArrSum(yc[cur1c%:length%],holdV);
+    length%:=cur6c%-cur5c%;
+    ArrSum(yc[cur5c%:length%],stepV);
+    
+    FrontView(rspView%);
+    ArrMul(x[],0);
+    ArrMul(y[],0);
+    XYGetData(channels%[k%], x[], y[]);
+    length%:=cur2%-cur1%;
+    ArrSum(y[cur1%:length%],holdC);
+    length%:=cur6%-cur5%;
+    ArrSum(y[cur5%:length%],endC);
+    length%:=cur4%-cur3%;
+    peakInd%:=Max(y[cur3%:length%])+ cur3%;
+    peak:=y[peakInd%];
+    peakT:=x[peakInd%];
+    amplitude:=peak-holdC;
+    Printlog(("%f,%f,%f,%f,%f,%f,%f\n"), holdV, holdC, StepV, peak, amplitude, peakT, endC);
+    next
+  
+
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+WindowSize(50,100);
+Window(50,0);
+FrontView(cmdView%);
+WindowSize(50,50);
+Window(0,0);
+FrontView(rspView%);
+WindowSize(50,50);
+Window(0,50);
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

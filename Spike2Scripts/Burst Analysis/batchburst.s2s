@@ -1,0 +1,157 @@
+'Script to do full burst analysis for one channel in a sequence of files. Includes time correction. For details, see the annotations
+'in the "burststat"-script. The difference is that you do everything from waveform channels and don't need to open up every file to create
+'event channels. Open up one file to check what your channel assignments are and what the threshold/peak amplitude for the signal you want is. 
+'CAUTION, there is one minor glitch:
+'1) for some reason, this script gets progressively slower as it opens up and closes more and more files (spike2 probably doesn't kill 
+'   all the running processes). Depended of the size of your individual files you may want to do the processing in chunks. Youy can assign in
+'   the dialog at what experiment time the first file in a batch starts.
+
+'upgrade: now the files don't have to be equal lengths anymore. the file duration read out is automatic.
+
+'Dirk Bucher, March 2002
+'upgrade September 2002
+'bug fix 06/09/03	--> spkfreq in burst is now calculated as nspk-1/dur
+'upgrade to spike5 08/24/03
+'upgrade 02/19/04, Adam Taylor. Trailing spaces at the end of channel names are ignored now.... 
+
+'------------------------------------------------------------------------------------------------
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+var prep$, list%[10], nChan%,i%, j%, k%, title$, ChNumber%, name$, chName$, ok%, ok1%, Fnames$[1000], nFiles;
+var mode%, int, level;
+var int2,int3,minim;
+var fileT, offsetT, filecount%;
+var meanI, sdI, meanD, sdD, nBursts%;
+var spktime[2000], nburststart%, burststart [10000], burstend[10000] ;
+var period, burstfreq, duration, dutycycle, nSpikes%, meanrate, endtime, relstart, relend;			'assigns variables
+
+ok%:= FilePathSet("");
+if ok%<0 then
+  halt
+endif
+
+mode%:=0|1|2|3; 'list for mode assignment	
+
+DlgCreate ("Specify");
+DlgString (1, "Prep label:", 20);
+DlgString (2, "Search for channel name:", 20);
+DlgText ("FIND SPIKES:", 1,4);
+DlgList (3,"Mode","Peaks|Troughs|Data rising through level|Data falling through level", 4,0,5);
+DlgReal (4, "Minimum interval [s]", 0,100, 0, 6);
+DlgReal (5, "Level [mV]", -100,100, 0,7);
+DlgText ("FIND BURSTS:", 1, 9);
+DlgReal (6, "Maximum spike interval", 0,100, 0,10);
+DlgReal (7, "Maximum spike interval for first 2 events", 0,100, 0,11);
+DlgReal (8, "Minimum number of events", 2,100, 0,12);
+DlgText ("TIME CORRECTION:", 1, 14);
+DlgReal (9, "First file in batch starts at [s]:", -100000, 100000, 0,15);
+DlgText ("", 1, 16);
+mode%:=0;
+int:=0.001;
+level:=3;
+int2:=0.3;  'presets for dialog
+int3:=0.3;
+minim:=2;
+fileT:=0;
+
+
+ok1%:= DlgShow (prep$, chName$, mode%, int, level, int2,int3,minim, fileT);
+
+if ok1%<>1 then
+  halt
+endif
+
+
+PrintLog("Experiment, Filename, mean cycle period [s], SD cycle period, mean burst duration [s],SD burst duration,");
+Printlog ("burst#(in file), BurstStart(file), BurstEnd(file), BurstStart(exp), BurstEnd(exp), cycle period [s],");
+Printlog ("inst BurstFreq [Hz], burst duration [s], dutycycle, #SpikesInBurst, SpikeFreqInBurst [Hz]\n");
+
+'prints column titles to log window
+
+
+nFiles:= FileList (Fnames$[], 0);
+
+for j%:=0 to nFiles-1 step 1 do
+  '-------------------------------------------
+  'searching for the channel number of the specified channel name
+  name$ := Fnames$[j%];
+  FileOpen(name$, 0, 2);
+
+  offsetT := offsetT + MaxTime();
+
+  nChan% := ChanList(list%[], 1);
+
+  i% := 0;
+  repeat
+    i% := i%+1;
+    title$ := ChanTitle$(i%);
+    ' need to trim any trailing spaces from channel titles
+    var titleLen%;
+    titleLen% := Len(title$);
+    var iStr%, thisChar$;
+    iStr% := titleLen%;
+    thisChar$ := Mid$(title$, iStr%, 1);
+    while iStr% > 0 and thisChar$ = " " do
+      iStr% := iStr% - 1;
+      thisChar$ := Mid$(title$, iStr%, 1);
+    wend
+    var titleTrimmed$;
+    if iStr% <> 0 then
+      titleTrimmed$ := DelStr$(title$, iStr% + 1, titleLen% - iStr% );
+    else
+      titleTrimmed$ := title$;
+    endif
+    ' okay, done trimming
+  until titleTrimmed$ = chName$;
+
+  filecount% := j%;
+
+  '-------------------------------------------
+
+  var mem1%, mem2%;
+
+  mem1%:=MemChan(2);  'creates a new buffer channel event type
+  MemImport(mem1%, i%, 0, MaxTime () ,mode% , int, level);  'imports the events to the buffer channel, as specified in the dialog
+  mem2%:=MemChan();  'new buffer channel is created
+  BurstMake(mem2%,mem1%,0,MaxTime (),int2, int3, minim);
+  nBursts%:= BurstStats(mem2%, 0, MaxTime(),meanI, sdI, meanD, sdD);
+
+  'puts burst starts and ends into seperate arrays:
+  MarkMask(mem2%,-1,1,-1); 'reset = include all codes
+  MarkMask(mem2%,0,-1,-1);	'set all codes off
+  MarkMask(mem2%,0,1,0);		'turn on code 0 = burst start only
+
+  nburststart%:=ChanData(mem2%, burststart [], 0, MaxTime()); 'put all burst starts into an array
+
+  MarkMask(mem2%,-1,1,-1); 'reset = include all codes
+  MarkMask(mem2%,0,-1,-1);  'set all codes off
+  MarkMask(mem2%,0,1,1);  'turn on code 1=end code only
+
+  ChanData(mem2%, burstend[], 0, MaxTime()); 'put all burst ends into an array
+
+  MarkMask(mem2%,-1,1,-1);  'turn on both markers again
+
+  for k% := 0 to nburststart%-2 step 1 do  'loop through all bursts
+    period := burststart [k%+1]-burststart [k%];
+    duration:=burstend [k%]-burststart [k%];
+    nSpikes%:=ChanData(mem1%,spktime[],burststart [k%],burstend [k%]);
+    endtime:= burstend [k%];
+    burstfreq:= 1/period;
+    dutycycle:=duration/period;
+    meanrate:=(nSpikes%-1)/duration;
+    Printlog ("%s, %s, %f, %f, %f, %f, %d, %f, %f,", prep$, Fnames$[j%], meanI, sdI, meanD, sdD, k%+1,burststart[k%],burstend[k%]);
+    PrintLog ("%f, %f,", burststart[k%]+fileT+offsetT-MaxTime(), burstend[k%]+fileT+offsetT-MaxTime());
+    PrintLog ("%f,%f,%f,%f,%d,%f\n", period, burstfreq, duration, dutycycle, nSpikes%, meanrate);
+  next
+  FileClose (-1,-1);
+next
+
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif

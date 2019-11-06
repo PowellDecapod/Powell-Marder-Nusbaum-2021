@@ -1,0 +1,164 @@
+'Script to measure the amplitudes of PSPs in trains or bursts. Returns amplitude, relative time
+'and number within a train, so you can later sort and pool 1st, 2nd, 3rd event etc.
+'You need the waveform channel holding the signals, a marker channel marking bursts or trains
+'and an event channel marking the single events within a burst. You have to define a time window
+'relative to the train start to average the baseline and a window around the single events to look for the peaks.
+'For measuring area above baseline, use script "aab".
+
+'Dirk Bucher, April 2002.
+
+'updated Dirk Bucher, April 2003.
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   halt
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	halt								'...script is stopped.
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+'-----------------------------------------------------------------------------------------------------------------------
+
+'gets the filename of the time view for later use in printed header line
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+var choose%;
+
+choose%:=Query ("Select|Analyze:", "EPSPs_EJPs_IPSCs", "IPSPs_EJCs_EPSCs");
+
+
+var stimch%, trainch%, wavech%, time1, time2, time3, time4;
+
+DlgCreate ("Analyse triggered PSP trains");	
+DlgText ("Assign channels:", 1,1);
+DlgChan (1,"Waveform channel:", 1, 0, 2);
+DlgChan (2,"Stimulus channel:", 2, 0, 3);
+DlgChan (3, "Train marker channel", 8, 0, 4);
+DlgText ("Define a time window to average the baseline:", 1,6);
+DlgReal (4, "Start from trainstart [ms]", -20000,20000, 0, 7);
+DlgReal (5, "End from trainstart [ms]", -20000,20000, 0, 8);
+DlgText ("Define a time window to search for a peak:", 1,10);
+DlgReal (6, "Start from stimulus [ms]", -20000,20000, 0, 11);
+DlgReal (7, "End from stimulus [ms]", -20000,20000, 0, 12);
+DlgText ("", 1, 13);
+time1:=-500;
+time2:=-50;
+time3:=0;
+time4:=80;
+
+DlgShow (wavech%, stimch%, trainch%, time1, time2, time3, time4);
+
+if stimch%<1 or wavech%<1 then		'checks if both burstchannels are assigned and different from each other.
+	Message ("No valid channel assignment!");						'if not, message pops up and...
+	halt																		'...script is stopped
+endif
+
+if time1>=time2 or time3>=time4 then
+	Message ("Invalid time windows!");
+	halt
+endif
+
+PrintLog("DATAFILE= ",fname$,"  /  ","WAVEFORMCHANNEL= " , ChanTitle$(wavech%),"  /  ","TRIGGERCHANNEL= "
+, ChanTitle$(stimch%)," /  " ,"START= ",cur1,"  /  ","END=", cur2);
+Printlog ("\n");
+Printlog ("#train,","trainstart,", "#signal,"," stimtime,"," peakTime,"," TimeToPeak(from stimtime),", " baseline,", " peak,"," amplitude");
+
+
+var t1, t2, t3, t4;
+t1:= time1/1000;
+t2:= time2/1000;
+t3:= time3/1000;
+t4:= time4/1000;
+
+var trainstart[10000],trainend[10000], nTrainstart%, nTrainend%, stimulus[10000], nStim%;
+var j%, k%;	'counter
+
+'puts burst starts and ends into seperate arrays:
+MarkMask(trainch%,-1,1,-1); 'reset = include all codes
+MarkMask(trainch%,0,-1,-1);	'set all codes off
+MarkMask(trainch%,0,1,0);		'turn on code 0 = burst start only
+
+nTrainstart%:=ChanData(trainch%, trainstart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(trainch%,-1,1,-1); 'reset = include all codes
+MarkMask(trainch%,0,-1,-1);	'set all codes off
+MarkMask(trainch%,0,1,1);		'turn on code 1=end code only
+
+nTrainend%:=ChanData(trainch%, trainend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(trainch%,-1,1,-1);	'turn on both markers again 
+
+if trainstart[0] > trainend[0] or nTrainend%<>nTrainstart% then
+
+Message ("Markers for train start/end mismatched!");
+halt
+
+endif
+
+for k%:=0 to nTrainstart%-1 step 1 do
+nStim%:= ChanData (stimch%, stimulus[], trainstart [k%], trainend[k%]);
+var baseline;
+
+baseline:= ChanMeasure (wavech%, 2, trainstart[k%]+t1,trainstart[k%]+t2);
+
+for j% := 0 to nStim%-1 step 1 do		' loop through all complete cycles
+
+var Peak, peakT, Amp, peakdelay; 
+
+if choose%=1 then
+Peak:= ChanMeasure(wavech%, 8, stimulus[j%]+t3,stimulus[j%]+t4);
+peakT:= ChanSearch(wavech% ,1, stimulus[j%]+t3, stimulus[j%]+t4);
+else
+Peak:= ChanMeasure(wavech%, 9, stimulus[j%]+t3,stimulus[j%]+t4);
+peakT:= ChanSearch(wavech% ,2, stimulus[j%]+t3, stimulus[j%]+t4);
+endif
+Amp:= Peak-baseline;
+peakdelay:= peakT-stimulus[j%];
+
+PrintLog ("%d,%f, %d, %f, %f, %f, %f, %f, %f\n", k%+1, trainstart[k%], j%+1, stimulus[j%], peakT , peakdelay, baseline, Peak, Amp);
+
+next
+
+next
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));		'brings script to front...
+FileClose (0);			'...and closes it
+
+
+

@@ -1,0 +1,135 @@
+'checks for spike failures or ectopic spikes in burst stimulations, and zooms in on the next occurence of a mismatch
+'between stim and response event channels. Specifically written for PD axon recordings and specific channel names:
+' - stim event channel:       stimEdit
+' - response event channel:   PDEdit
+' - stim marker:              stimburst
+' - response marker:          PDburst
+'Channel names can easily be edited by changing them in the terms "repeat chantitle until title:" below.
+
+'Dirk Bucher 2011
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+var list%[100], title$, PDch%, stimch%, PDburstch%, stimburstch%, a%, b%, d%, e%;
+
+ChanList (list%[], 10);
+
+a%:=0;
+repeat
+a%:=a%+1;
+title$:= ChanTitle$ (a%);
+until
+title$="PDEdit";
+
+PDch%:=a%;
+
+b%:=0;
+repeat
+b%:=b%+1;
+title$:= ChanTitle$ (b%);
+until
+title$="stimEdit";
+
+stimch%:=b%;
+
+d%:=0;
+repeat
+d%:=d%+1;
+title$:= ChanTitle$ (d%);
+until
+title$="stimburst";
+
+stimburstch%:=d%;
+
+e%:=0;
+repeat
+e%:=e%+1;
+title$:= ChanTitle$ (e%);
+until
+title$="PDburst";
+
+PDburstch%:=e%;
+
+var nStimburststart%, stimburststart[2000], stimburstend[2000],nPDburststart%, PDburststart[2000], PDburstend[2000];
+var nStim%, nSpike%, PD[100], stim[100], j%;
+
+MarkMask(stimburstch%,-1,1,-1); 'reset = include all codes
+MarkMask(stimburstch%,0,-1,-1);	'set all codes off
+MarkMask(stimburstch%,0,1,0);		'turn on code 0 = burst start only
+
+nStimburststart%:=ChanData(stimburstch%, stimburststart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(stimburstch%,-1,1,-1); 'reset = include all codes
+MarkMask(stimburstch%,0,-1,-1);	'set all codes off
+MarkMask(stimburstch%,0,1,1);		'turn on code 1=end code only
+
+ChanData(stimburstch%, stimburstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(stimburstch%,-1,1,-1);	'turn on both markers again
+
+
+MarkMask(PDburstch%,-1,1,-1); 'reset = include all codes
+MarkMask(PDburstch%,0,-1,-1);	'set all codes off
+MarkMask(PDburstch%,0,1,0);		'turn on code 0 = burst start only
+
+nPDburststart%:=ChanData(PDburstch%, PDburststart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(PDburstch%,-1,1,-1); 'reset = include all codes
+MarkMask(PDburstch%,0,-1,-1);	'set all codes off
+MarkMask(PDburstch%,0,1,1);		'turn on code 1=end code only
+
+ChanData(PDburstch%, PDburstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(PDburstch%,-1,1,-1);	'turn on both markers again
+
+for j%:=0 to nStimburststart%-1 step 1 do
+    nStim%:=ChanData(stimch%, stim[], stimburststart[j%], stimburstend[j%]);
+    nSpike%:=ChanData(PDch%, PD[], PDburststart[j%], PDburstend[j%]);
+    if nStim%>nSpike% or nStim%<nSpike% then
+        XRange(stimburststart[j%]-0.2, stimburstend[j%]+0.3);
+        halt
+        FrontView (App (3));		'brings script to front...
+        FileClose (0);				'...and closes it
+    endif
+   
+ next   
+    
+    
+    
+    
+    
+

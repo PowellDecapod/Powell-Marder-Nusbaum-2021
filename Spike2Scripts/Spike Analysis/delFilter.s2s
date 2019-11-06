@@ -1,0 +1,196 @@
+'"spikesort"
+
+'Script to sort spikes according to 2 different delay times between 2 recording sites ("delay filter"). You need 2 event channels holding
+'the spike times from the 2 different recording sites. The dialog asks you to assign one channel with the spikes you want to sort and one
+'to look for the delay times. Then you specify 2 time windows in which to look for a spike in the second channel with respect to every spike
+'in the first. You can get the time windows from doing either multiple sweeps or event correlations first.
+'5 new event channels are written then:
+
+'1) "signal 1": holding the spike times of channel 1 for which only in window 1 a spike was found in channel 2.
+'2) "signal 1": holding the spike times of channel 1 for which only in window 2 a spike was found in channel 2.
+'3) "no match": holding the spike times of channel 1 for which no spikes were found in either time window in channel 2.
+'4) "ambiguous": holding the spike times of channel 1 for which spikes were found in both time windows in channel 2.
+'5) "leftover": holding the spike times of of both "no match" and "ambiguous". You may want to use this channel as a new channel 1 if you do
+'repeated runs to exract more than 2 signals.
+
+
+'Dirk Bucher, December 2002.
+
+'-------------------------------------------------------------------------------------------
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+var sortch%, delaych%, time1, time2, time3, time4; 'sets variable expressions
+
+DlgCreate ("sort spikes with different delay times");	
+DlgText ("Assign channels:", 1,1);
+DlgChan (1,"Event channel to sort:", 10, 0, 2);
+DlgChan (2,"Event channel to look for delays:", 10, 0, 3);
+DlgText ("Define a time window to look for signal 1:", 1,5);
+DlgReal (3, "Start after stimulus [ms]", -20000,20000, 0, 6);
+DlgReal (4, "End after stimulus [ms]", -20000,20000, 0, 7);
+DlgText ("Define a time window to look for signal 2:", 1,9);
+DlgReal (5, "Start after stimulus [ms]", -20000,20000, 0, 10);
+DlgReal (6, "End after stimulus [ms]", -20000,20000, 0, 11);
+DlgText ("", 1, 12);
+time1:=23.6;
+time2:=25.3;
+time3:=48.6;
+time4:=50.3;
+
+DlgShow (sortch%, delaych%, time1, time2, time3, time4);
+
+if sortch%<1 or delaych%<1 then		'checks if both burstchannels are assigned and different from each other.
+	Message ("No valid channel assignment!");						'if not, message pops up and...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+if time1>=time2 or time3>=time4 then
+	Message ("Invalid time windows!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+var t1, t2, t3, t4;
+t1:= time1/1000;
+t2:= time2/1000;
+t3:= time3/1000;
+t4:= time4/1000;
+
+var mem1%, mem2%, mem3%, mem4%, mem5%;
+
+mem1%:=MemChan(2);
+mem2%:=MemChan(2);
+mem3%:=MemChan(2);
+mem4%:=MemChan(2);
+mem5%:=MemChan(2);
+
+var sort[100000], nSort%, delay1%, delay2%, match1[50], match2[50];
+var j%;	'counter
+ 
+
+nSort%:= ChanData (sortch%, sort[],cur1, cur2);
+
+
+for j% := 0 to nSort%-1 step 1 do		' loop through all complete cycles
+
+delay1%:= ChanData (delaych%, match1[], sort[j%]+t1, sort[j%]+t2);
+delay2%:= ChanData (delaych%, match2[], sort[j%]+t3, sort[j%]+t4);
+
+if delay1%>0 and delay2%=0 then
+
+MemSetItem (mem1%,0,sort[j%]);
+
+else
+if delay1%=0 and delay2%>0 then
+
+MemSetItem (mem2%,0,sort[j%]);
+
+else
+if delay1%=0 and delay2%=0 then
+
+MemSetItem (mem3%,0,sort[j%]);
+
+else
+
+MemSetItem (mem4%,0,sort[j%]);
+
+endif
+endif
+endif
+
+ArrMul (match1[],0);
+ArrMul (match2[],0);
+
+next
+
+var list%[100], name1$,name2$,name3$,name4$, name5$;
+
+name1$:="delay1";
+name2$:="delay2";
+name3$:="no match";
+name4$:="ambiguous";
+name5$:="leftover";
+
+ChanList (list%[],128);
+
+MemSave(mem1%,list%[1]);	'saves buffer channel to a real channel
+ChanShow(list%[1]);				'shows new channel
+ChanTitle$(list%[1],name1$);		'names new channel
+DrawMode(list%[1],2);				'sets channel draw mode to "lines"
+
+MemSave(mem2%,list%[2]);	'saves buffer channel to a real channel
+ChanShow(list%[2]);				'shows new channel
+ChanTitle$(list%[2],name2$);		'names new channel
+DrawMode(list%[2],2);				'sets channel draw mode to "lines"
+
+MemSave(mem3%,list%[3]);	'saves buffer channel to a real channel
+ChanShow(list%[3]);				'shows new channel
+ChanTitle$(list%[3],name3$);		'names new channel
+DrawMode(list%[3],2);				'sets channel draw mode to "lines"
+
+MemSave(mem4%,list%[4]);	'saves buffer channel to a real channel
+ChanShow(list%[4]);				'shows new channel
+ChanTitle$(list%[4],name4$);		'names new channel
+DrawMode(list%[4],2);				'sets channel draw mode to "lines"
+
+MemImport (mem5%, list%[3], cur1, cur2);
+MemImport (mem5%, list%[4], cur1, cur2);
+MemSave(mem5%,list%[5]);	'saves buffer channel to a real channel
+ChanShow(list%[5]);				'shows new channel
+ChanTitle$(list%[5],name5$);		'names new channel
+DrawMode(list%[5],2);				'sets channel draw mode to "lines"
+
+ChanDelete(mem1%, 0);
+ChanDelete(mem2%, 0);
+ChanDelete(mem3%, 0);
+ChanDelete(mem4%, 0);
+ChanDelete(mem5%, 0);
+
+var leftover[100000], nLeftover%;
+
+nLeftover%:= ChanData (list%[5], leftover[],cur1, cur2);
+
+Message ("%2.1f%s", nLeftover%*100.0/nSort%,"% of the spikes could not be matched to either of the 2 delays");
+
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+

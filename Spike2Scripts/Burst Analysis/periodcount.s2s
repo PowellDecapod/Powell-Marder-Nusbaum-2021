@@ -1,0 +1,96 @@
+'Counts number of pyloric cycles (with fractions) within each gastric cycle.
+'You need marker channels for pyloric and gastric bursts.
+
+'Dirk Bucher 2005
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+
+
+'-------------------------------------------------------------------------------------------------
+var pyloricChan%, gastricChan%, ok1%;
+
+DlgCreate("Select");
+DlgChan(1,"pyloric period channel",10);
+DlgChan(2,"gastric period channel",10);
+ok1%:=DlgShow(pyloricChan%, gastricChan%);
+
+var npyloricburststart%, pyloricburststart[10000];
+MarkMask(pyloricchan%,-1,1,-1);  'reset = include all codes
+MarkMask(pyloricchan%,0,-1,-1);		'set all codes off
+MarkMask(pyloricchan%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+npyloricburststart%:=ChanData(pyloricchan%,pyloricburststart[],cur1,cur2);	'get levator burst start times
+MarkMask(pyloricchan%,-1,1,-1);  'reset = include all codes
+
+var ngastricburststart%, gastricburststart[10000];
+MarkMask(gastricchan%,-1,1,-1);  'reset = include all codes
+MarkMask(gastricchan%,0,-1,-1);		'set all codes off
+MarkMask(gastricchan%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+ngastricburststart%:=ChanData(gastricchan%,gastricburststart[],cur1,cur2);	'get levator burst start times
+MarkMask(gastricchan%,-1,1,-1);  'reset = include all codes
+
+var startfraction, endfraction, nPylorics, j%, k%, l%;
+Printlog("gastric cycle, #pyloric cycles\n");
+for j%:=1 to ngastricburststart%-2 step 1 do
+
+nPylorics:=ChanMeasure(pyloricchan%, 4, gastricburststart[j%], gastricburststart[j%+1]);
+	k%:=0;
+	repeat
+		k%:=k%+1;
+	until pyloricburststart[k%]>gastricburststart[j%] or k%>npyloricburststart%-1;
+		if k%<npyloricburststart%-1 then
+			startfraction:=(pyloricburststart[k%]-gastricburststart[j%])/(pyloricburststart[k%]-pyloricburststart[k%-1]);
+		endif
+
+	l%:=0;
+	repeat
+		l%:=l%+1;
+	until pyloricburststart[l%]>gastricburststart[j%+1] or l%>npyloricburststart%-1;
+		if l%<npyloricburststart%-1 then
+			endfraction:=(gastricburststart[j%+1]-pyloricburststart[l%-1])/(pyloricburststart[l%]-pyloricburststart[l%-1]);
+		endif
+
+Printlog("%d,%f\n",j%,nPylorics+startfraction+endfraction);
+
+next
+
+Frontview (LogHandle ());
+FrontView (App (3));		'bring script to the front...
+FileClose (0);				'...and close it

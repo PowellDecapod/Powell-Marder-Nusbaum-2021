@@ -1,0 +1,84 @@
+'Returns time constants from dual exponential fits for PSPs or spikes as marked with event channel.
+'Dirk Bucher 2010
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+
+var ok%, cur1, cur2, title$, xy%;	'sets variable expressions	
+
+title$:= WindowTitle$();
+
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";		'gets the filename of the time view
+
+
+	if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+		cur1:=0;
+		cur2:=MaxTime();
+	else
+
+		cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+		cur2 := Cursor(2);
+	endif
+
+var ok1%, wavech%, peakch%, winstart, winend;
+
+DlgCreate ("Select");														'dialog window
+DlgChan (1,"peak channel",10);
+DlgChan (2,"Waveform channel",513);
+DlgReal (3,"start from peak [ms]",0,50000);
+DlgReal (4,"end from peak [ms]",-50000,50000);
+winstart:=1;
+winend:=30;
+
+ok1% := DlgShow(peakch%, wavech%, winstart, winend);
+
+if ok1%<>1 then
+FrontView (App (3));		'brings script to front...
+    FileClose (0);			'...and closes it
+endif
+
+winstart:=winstart/1000;
+winend:=winend/1000;
+
+var nPeaks%,peaks [20000], k%, tau1, tau2, freq;
+
+nPeaks%:=ChanData(peakch%, peaks [], cur1, cur2);
+PrintLog("t[s], inst freq [Hz],tau1[ms], tau2[ms]\n");
+
+for k%:=0 to nPeaks%-2 step 1 do
+    if k%=0 then
+        freq:=0;
+    else
+        freq:=1/(peaks[k%]-peaks[k%-1]);
+    endif
+    
+    if (peaks[k%+1]-peaks[k%])>(winstart+winend) then
+        ChanFit(wavech%,0,0);
+        ChanFit(wavech%,1,2);
+        ChanFit(wavech%,3,peaks[k%]+winstart, peaks[k%]+winend);
+        tau1:=ChanFitCoef(wavech%,1);
+        tau2:=ChanFitCoef(wavech%,3);
+        PrintLog(("%f,%f,%f,%f\n"),peaks[k%],freq, tau1*1000,tau2*1000);
+    else
+        ChanFit(wavech%,0,0);
+        ChanFit(wavech%,1,1);
+        ChanFit(wavech%,3,peaks[k%]+winstart, peaks[k%]+0.006);
+        tau1:=ChanFitCoef(wavech%,1);
+        PrintLog(("%f,%f,%f"),peaks[k%],freq, tau1*1000);
+        Printlog(",");
+        Printlog("\n");
+        endif
+    next
+    
+    

@@ -1,0 +1,120 @@
+'CREATING A MARKER CHANNEL THAT HOLDS BURST STARTS (00) AND BURST ENDS (01).
+'You need an event channel with spike times as the input.
+
+'Dirk Bucher, Jan 2002.
+'upgrade to spike5 (will still work in spike4) 08/24/03
+'added function to determine minimum burst duration 08/25/03.
+'added optional detection of single isolated spikes as bursts 03/20/13
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)/Cursor (1)<1 or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  		FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var input%,output%,name$,int,int1,minim, minBurst, check%;
+
+DlgCreate ("Find bursts");						'creates dialog to assign channels, the maximum interval spikes are allowed to have to still
+DlgChan (1,"Input channel", 2);				'belong to one burst and the minimum number of spikes that can make up a burst. maximum interval
+DlgChan (2, "Output channel", 128);			'can be set seperately for the first two spikes in a burst.
+DlgString (3, "Name of new channel", 20);
+DlgReal (4, "Maximum spike interval", 0,100);
+DlgReal (5, "Maximum spike interval for first 2 events", 0,100);
+DlgReal (6, "Minimum number of events", 2,100);
+DlgReal (7, "Minimum burst duration", 0, 100);
+DlgCheck(8,"allow single spike bursts");
+name$:="New bursts...";				
+int:=0.1;					'presets for dialog
+int1:=0.1;
+minim:=5;
+
+ok%:= DlgShow (input%,output%,name$,int,int1,minim, minBurst, check%);  'show dialog
+
+if ok%=0 then					'if "Cancel" is clicked, close the script
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+var memch%, nburststart%, burststart[10000], burstend[10000], j%;
+
+memch%:=MemChan(); 'new buffer channel is created
+
+BurstMake(memch%,input%,cur1,cur2,int, int1, minim);		'this is the actual marking of the bursts, using the assigned parameters
+
+'puts burst starts and ends into seperate arrays:
+MarkMask(memch%,-1,1,-1); 'reset = include all codes
+MarkMask(memch%,0,-1,-1);	'set all codes off
+MarkMask(memch%,0,1,0);		'turn on code 0 = burst start only
+
+nburststart%:=ChanData(memch%, burststart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(memch%,-1,1,-1); 'reset = include all codes
+MarkMask(memch%,0,-1,-1);	'set all codes off
+MarkMask(memch%,0,1,1);		'turn on code 1=end code only
+
+ChanData(memch%, burstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(memch%,-1,1,-1);	'turn on both markers again
+
+for j% := 0 to nburststart%-1 step 1 do 'loop through all bursts
+
+if (burstend[j%]-burststart[j%]) < minBurst then
+
+MemDeleteTime(memch% ,0, burststart[j%]);
+MemDeleteTime(memch% ,0, burstend[j%]);
+
+endif
+
+next
+
+if check%=1 then
+    var spikes[100000], nspks%, k%, preSpk, postSpk, code%[4];
+    code%[0]:=1;
+    nspks%:=ChanData(input%,spikes[],cur1,cur2);
+    for k%:=0 to nspks%-1 step 1 do
+        postSpk:=NextTime(input%,spikes[k%]);
+        preSpk:=LastTime(input%,spikes[k%]);
+        if (postSpk-spikes[k%]<0 or
+            postSpk-spikes[k%]>int1) and
+            (spikes[k%]-preSpk<0 or
+            spikes[k%]-preSpk>int1) then
+            MemSetItem(memch%, 0, spikes[k%]);
+            MemSetItem(memch%, 0, spikes[k%]+.0001,code%[]);
+        endif
+    next
+endif
+
+        
+
+MemSave(memch%,output%, 5, 0);	'save the buffer channel to a real channel (type: marker (5)) and query to overwrite, when already present
+
+ChanDelete(memch%, 0);				'delete the buffer channel; 
+ChanShow(output%); 				'show the new marker channel in the time view
+ChanTitle$(output%,name$);		'name it
+
+FrontView (App (3));				'bring the script to the front....
+FileClose (0);						'...and close it

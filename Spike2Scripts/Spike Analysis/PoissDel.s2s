@@ -1,0 +1,170 @@
+'Analyzes delays and spike waveforms from poisson stimulations of axons. You need event channels that hold the stim times and
+'spike response peak times. If there are failures or ectopic spikes (i.e. the numbers of stims and responses don't match), you need
+'edited event channels with matching numbers in addition. The dialog will ask you for both the originals and the edited versions
+'and keeps track of number of ectopic spikes and spike failures. You also need the original waveform channel. If there are substantial
+'stimulus artifacts in it, this will mess with finding correct trough voltages between spikes. You will therefore also be asked to assign
+'a filtered waveform channel (duplicate it and use the smoothing filter).
+
+'Dirk Bucher 2010
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var stimch%,spkch%, wavech%, troughch%, ok1%,nStim%, nSpk%, stim[20000], stimEdit[20000],spks[20000], spkEdit[20000];
+var nStimEdit%, nSpkEdit%,troughstart, troughend, stimEditCh%, spkEditCh%;
+DlgCreate("Select");
+DlgChan(1,"stim channel:", 2);
+DlgChan(2,"edited stim channel:",2);
+DlgChan(3,"spike channel:",2);
+DlgChan(4,"edited spike channel:",2);
+DlgChan(5,"waveform channel",529);
+DlgChan(6,"filtered trough channel",529);
+DlgReal(7,"troughsearch start from spike [ms]", -1000,1000);
+DlgReal(8,"troughsearch end from spike [ms]", -1000,1000);
+troughstart:=-3;
+troughend:=-1;
+ok%:=DlgShow(stimch%, stimEditCh%, spkch%, spkEditCh%, wavech%, troughch%, troughstart, troughend);
+if ok1%<>1 then
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+troughstart:=troughstart/1000;
+troughend:=troughend/1000;
+nStim%:=ChanData(stimch%, stim[],cur1,cur2);
+nSpk%:=ChanData(spkch%, spks[],cur1,cur2);
+nStimEdit%:=ChanData(stimEditCh%, stimEdit[],cur1,cur2);
+nSpkEdit%:=ChanData(spkEditCh%, spkEdit[],cur1,cur2);
+
+var err,j%;
+
+if nStimEdit%>nSpkEdit% then
+err:=nStimEdit%-nSpkEdit%;    
+    Message("there are ",err," more stimulus events than spikes!");
+    FrontView(App(3));
+    FileClose(0);
+endif
+if nStimEdit%<nSpkEdit% then
+err:=nSpkEdit%-nStimEdit%;    
+    Message("there are ",err," more spikes than stimulus events!");
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+Printlog("stim time [s], spike time [s], corr stim time [s], corr spike time [s], interval [s], instFreq [Hz], delay [ms], peakV[mV], troughV[mV], amp[mV], durthreshold[mV], dur@6th [ms], # ectopic spikes (before), minute, bins\n");
+var stimT,spkT,stimTcorr, spkTcorr,delay,instFreq,interval, peak, troughT;
+var trough, amp, onesixthlevel, startThreshT, endThreshT, dur, indexT, indexT2;
+var failtest%, failcount%, ectopSpks%;
+
+failcount%:=0;
+
+for j%:=0 to nstim%-1 step 1 do
+    failtest%:=ChanMeasure(stimEditCh%,4,stim[j%]-0.001,stim[j%]+0.001);
+    if failtest%=0 then
+        if j%+failcount%=0 then
+            ectopSpks%:=0;
+        else
+            ectopSpks%:=ChanMeasure(spkch%,4,spkEdit[j%-failcount%-1]-0.002, spkEdit[j%-failcount%]+0.002);
+            ectopSpks%:=ectopSpks%-2;
+        endif        
+        failcount%:=failcount%+1;
+        stimT:=stim[j%];
+        stimTcorr:=stim[j%]-stim[0];
+        indexT:=Round((stimTcorr/60)+0.5);
+        indexT2:=Round((stimTcorr/20)+0.5);
+        if j%=0 then
+            interval:=0;
+            instFreq:=0;
+        else
+            interval:=stim[j%]-stim[j%-1];
+            instFreq:=1/interval;
+        endif
+        Printlog("%f",stimT);
+        Printlog(",,");
+        Printlog("%f",stimTcorr);
+        Printlog(",,");
+        Printlog("%f,%f",interval,instFreq);
+        PrintLog(",-1,,,,,,");
+        PrintLog("%d,%d,%d\n",ectopSpks%,indexT, indexT2);
+    endif
+    
+    if failtest%=1 then
+        if j%+failcount%=0 then
+            ectopSpks%:=0;
+        else
+            ectopSpks%:=ChanMeasure(spkch%,4,spkEdit[j%-failcount%-1]-0.002, spkEdit[j%-failcount%]+0.002);
+            ectopSpks%:=ectopSpks%-2;
+        endif
+        stimT:=stim[j%];
+        spkT:=spkEdit[j%-failcount%];
+        delay:=(spkt-stimT)*1000;
+        stimTcorr:=stim[j%]-stim[0];
+        spkTcorr:=spkT-stim[0];
+        peak:=ChanValue(wavech%,spkT);
+        troughT:=ChanSearch(troughch%,2,spkT+troughstart,spkT+troughend);
+        trough:=Chanvalue(wavech%,troughT);
+        amp:=peak-trough;
+        onesixthlevel:=trough+amp/6;
+        startThreshT:=ChanSearch(wavech%, 7, spkT-0.003, spkT, onesixthlevel);
+        endThreshT:=ChanSearch(wavech%, 8, spkT, spkT+0.013,onesixthlevel);
+        dur:=(endThreshT-startThreshT)*1000;
+        indexT:=Round((stimTcorr/60)+0.5);
+        indexT2:=Round((stimTcorr/20)+0.5);
+        if j%=0 then
+            interval:=0;
+            instFreq:=0;
+        else
+            interval:=stim[j%]-stim[j%-1];
+            instFreq:=1/interval;
+        endif
+        Printlog("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d\n",stimT, spkT, stimTcorr, SpkTcorr, interval, instFreq, delay, peak, trough, amp, onesixthlevel, dur, ectopSpks%,indexT, indexT2);
+    endif
+    
+    
+next
+Printlog ("\n"); 'add empty line                                                                                                                                   
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+        
+        
+    

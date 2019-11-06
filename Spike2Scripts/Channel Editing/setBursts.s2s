@@ -1,0 +1,154 @@
+'script to generate an event channel with "artificial bursts". you can set period, duration and eitehr number of spikes or spike frequency.
+'you have the choice if spike frequency or duration should be exact.
+
+'dirk bucher, dec 2002
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole time range?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var choose%;
+
+choose%:=Query ("Select|Exact parameter:", "spike frequency", "burst duration");
+
+var ok1%,per, dur, freq, ISI, nSpikes%, start, nBursts%, outch%, name$;
+
+if choose%=1 then
+
+
+DlgCreate ("set burst parameters");                'start dialog for kernal time input 
+DlgReal (1, "cycle period [s]:",0, 100);
+DlgReal (2, "burst duration [s]:",0, 100);
+DlgReal (3, "spike frequency [Hz]:", 0, 10000);
+DlgReal (4, "first burst starts at [s]:", 0, 10000);
+DlgChan (5, "New channel #:",128);							
+DlgString (6, "New channel name:",15);						
+per:=1;
+dur:=0.3;
+freq:=20;
+start:=0.5;
+name$:="new channel";
+ok1%:=DlgShow(per, dur, freq, start, outch%, name$);	'assign variables
+
+if ok1%<>1 then
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+ISI:=1/freq;
+
+nSpikes%:=dur/ISI+1;
+if (ISI-1)*nSpikes%>dur then
+
+nSpikes%:=nSpikes%-1;
+
+endif
+
+else
+
+DlgCreate ("set burst parameters");                'start dialog for kernal time input 
+DlgReal (1, "cycle period [s]:",0, 100);
+DlgReal (2, "burst duration [s]:",0, 100);
+DlgInteger (3, "# of spikes/burst:", 0, 10000);
+DlgReal (4, "first burst starts at [s]:", 0, 10000);
+DlgChan (5, "New channel #:",128);							
+DlgString (6, "New channel name:",15);						
+per:=1;
+dur:=0.3;
+nSpikes%:=5;
+start:=0.5;
+name$:="new channel";
+ok1%:=DlgShow(per, dur, nSpikes%, start, outch%, name$);	'assign variables
+
+if ok1%<>1 then
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+ISI:=dur/(nSpikes%-1);
+
+endif
+
+nBursts%:=(cur2-(cur1+start))/per+1;
+
+var mChan%, i%;
+
+mChan%:=MemChan(2, 0);
+
+
+for i% :=0 to nBursts%-1 step 1 do
+
+
+MemSetItem(mChan%, 0, cur1+start+(i%*per));
+
+next
+
+var burststart[10000], k%;
+
+ChanData(mChan%, burststart[], cur1, cur2);
+
+for i% :=0 to nBursts%-1 step 1 do
+
+if choose%=1 then
+
+for k%:=0 to nSpikes%-1 step 1 do
+
+if (burststart[i%]+(k%+1)*ISI)<cur2 then
+
+MemSetItem(mChan%, 0, burststart[i%]+(k%+1)*ISI)
+
+endif
+
+next
+
+else
+
+for k%:=0 to nSpikes%-2 step 1 do
+
+if (burststart[i%]+(k%+1)*ISI)<cur2 then
+
+MemSetItem(mChan%, 0, burststart[i%]+(k%+1)*ISI)
+
+endif
+
+next
+
+endif
+
+next
+
+MemSave(mchan%,outch%);	'saves buffer channel to a real channel
+	ChanDelete(mchan%, 0);				'deletes the buffer channel
+	ChanShow(outch%);					'shows new channel
+	ChanTitle$(outch%,name$);		'names new channel
+	DrawMode (outch%, 2);
+
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

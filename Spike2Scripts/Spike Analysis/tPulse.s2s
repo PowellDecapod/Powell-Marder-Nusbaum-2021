@@ -1,0 +1,191 @@
+'Script to analyse data from recovery cycle protocols with conditioning trains. You need event channels that hold the stimulus and spike peak
+'times, a marker channel that holds the train start times, a marker channel that holds the start and end of the burst response, and the waveform
+'channel with the spike response. Returned are delay values for conditioning and test pulses, deltas and ratios for delays, and the same for
+'spike waveform measures (trough, peak, amplitude, duration).
+
+'Dirk Bucher 2010
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var nStim%, nSpike%, stimch%, spikech%, stim[20000], spike[20000], ok1%;
+var burstch%, trainch%, nburststart%, nburstend%, ntrainstart%, ntrainend%;
+var burststart[20000], burstend[20000], trainstart[20000], trainend[20000];
+var wavech%, troughstart, troughend, waveDup%;
+
+DlgCreate("Select");
+DlgChan(1,"stim channel:", 2);
+DlgChan(2,"spike channel",2);
+DlgChan(3,"train channel",8);
+DlgChan(4,"burst channel",8);
+DlgChan(5,"waveform channel",529);
+ok1%:=DlgShow(stimch%, spikech%, trainch%, burstch%, wavech%);
+if ok1%<>1 then
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+nStim%:=ChanData(stimch%, stim[], cur1, cur2);
+nSpike%:=ChanData(spikech%,spike[], cur1, cur2);
+troughstart:=-.003;
+troughend:=-.001;
+waveDup%:=ChanDuplicate(wavech%);
+ChanProcessAdd(waveDup%,1);
+ChanProcessArg(waveDup%,1,1,0.001);
+
+MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+MarkMask(burstch%,0,-1,-1);	'set all codes off
+MarkMask(burstch%,0,1,0);		'turn on code 0 = burst start only
+
+nburststart%:=ChanData(burstch%, burststart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+MarkMask(burstch%,0,-1,-1);	'set all codes off
+MarkMask(burstch%,0,1,1);		'turn on code 1=end code only
+
+nburstend%:=ChanData(burstch%, burstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(burstch%,-1,1,-1);	'turn on both markers again
+
+MarkMask(trainch%,-1,1,-1); 'reset = include all codes
+MarkMask(trainch%,0,-1,-1);	'set all codes off
+MarkMask(trainch%,0,1,0);		'turn on code 0 = train start only
+
+ntrainstart%:=ChanData(trainch%, trainstart [], cur1, cur2); 'put all train starts into an array
+
+MarkMask(trainch%,-1,1,-1); 'reset = include all codes
+MarkMask(trainch%,0,-1,-1);	'set all codes off
+MarkMask(trainch%,0,1,1);		'turn on code 1=end code only
+
+ntrainend%:=ChanData(trainch%, trainend[], cur1, cur2); 'put all train ends into an array
+
+MarkMask(trainch%,-1,1,-1);	'turn on both markers again
+
+
+Printlog("stimTcond [s], stimTtrainend [s], stimTtest [s], interv [s], delay trainstart [ms], delay trainend [ms], delay test [ms], ratioDel1, deltaDel1 [ms], ratioDel2, deltaDel2 [ms], ratioDel3, deltaDel3 [ms],");
+PrintLog("cond1Trough [ms],cond2Trough [ms],testTrough [ms],ratioTrough1,deltaTrough1 [ms], ratioTrough2, deltaTrough2 [ms], ratioTrough3, deltaTrough3 [ms],cond1Peak [mV], cond2Peak [mV], testPeak [mV], ratioPeak1, deltaPeak1 [mV],");
+Printlog("ratioPeak2, deltaPeak2 [mV], ratioPeak3, deltaPeak3 [mV], cond1Amp [mV], cond2Amp [mV], testAmp [mV], ratioAmp1, deltaAmp1 [mV], ratioAmp2, deltaAmp2 [mV], ratioAmp3, deltaAmp3 [mV], cond1Dur [ms], cond2Dur [ms], testDur [ms],");
+PrintLog("ratioDur1, deltaDur1 [ms], ratioDur2, deltaDur2 [ms], ratioDur3, deltaDur3 [ms]\n");
+
+var j%, interv, delCond1, delCond2, delTest, deltaDel1, deltaDel2, deltaDel3, lastSpike, lastStim;
+var ratioDel1, ratioDel2, ratioDel3, cond1TroughT, cond1Trough, cond2TroughT, cond2Trough, testTroughT, testTrough;
+var ratioTrough1, ratioTrough2,ratioTrough3,deltaTrough1, deltaTrough2, deltaTrough3,cond1Peak, cond2Peak, testPeak;
+var ratioPeak1, ratioPeak2, ratioPeak3, deltaPeak1, deltaPeak2, deltaPeak3;
+var cond1Amp, cond2Amp,testAmp, ratioAmp1, ratioAmp2, ratioAmp3, deltaAmp1, deltaAmp2, deltaAmp3;
+var cond1Onesixthlevel, cond2Onesixthlevel, testOnesixthlevel,cond1StartThreshT,cond1EndThreshT;
+var cond2StartThreshT, cond2EndThreshT, testStartThreshT, testEndThreshT,cond1Dur,cond2Dur, testDur;
+var ratioDur1, ratioDur2, ratioDur3, deltaDur1, deltaDur2, deltaDur3;
+
+for j%:=0 to ntrainstart%-1 step 1 do
+    lastStim:= LastTime(stimch%, trainend[j%]-0.001);
+    lastSpike:=LastTime(spikech%, burstend[j%]-0.001);
+    interv:=trainend[j%]-lastStim;
+    delCond1:=(burststart[j%]-trainstart[j%])*1000;
+    delCond2:=(lastSpike-lastStim)*1000;
+    delTest:=(burstend[j%]-trainend[j%])*1000;
+    ratioDel1:=delTest/delcond1;
+    ratioDel2:=delTest-delCond2;
+    deltaDel1:=delTest-delCond1;
+    deltaDel2:=delTest-delcond2;
+    ratioDel3:=delCond2/delCond1;
+    deltaDel3:=delCond2-delCond1;
+    cond1TroughT:=ChanSearch(waveDup%,2,burststart[j%]+troughstart, burststart[j%]+troughend);
+    cond1Trough:=ChanValue(waveDup%,cond1TroughT);
+    cond2TroughT:=ChanSearch(waveDup%,2,lastSpike+troughstart, lastSpike+troughend);
+    cond2Trough:=ChanValue(waveDup%,cond2TroughT);
+    testTroughT:=ChanSearch(waveDup%,2, burstend[j%]+troughstart, burstend[j%]+troughend);
+    testTrough:=ChanValue(waveDup%,testTroughT);
+    ratioTrough1:=testTrough/cond1Trough;
+    deltaTrough1:=testTrough-cond1Trough;
+    ratioTrough2:=testTrough/cond2Trough;
+    deltaTrough2:=testTrough-cond2Trough;
+    ratioTrough3:=cond2Trough/cond1Trough;
+    deltaTrough3:=cond2Trough-cond1Trough;
+    cond1Peak:=ChanValue(wavech%,burststart[j%]);
+    cond2Peak:=ChanValue(wavech%,lastSpike);
+    testPeak:=ChanValue(wavech%,burstend[j%]);
+    ratioPeak1:=testPeak/cond1Peak;
+    deltaPeak1:=testPeak-cond1Peak;
+    ratioPeak2:=testPeak/cond2Peak;
+    deltaPeak2:=testPeak-cond2Peak;
+    ratioPeak3:=cond2Peak/cond1Peak;
+    deltaPeak3:=cond2Peak-cond1Peak;
+    cond1Amp:=cond1Peak-cond1Trough;
+    cond2Amp:=cond2Peak-cond2Trough;
+    testAmp:=testPeak-testTrough;
+    ratioAmp1:=testAmp/cond1Amp;
+    deltaAmp1:=testAmp-cond1Amp;
+    ratioAmp2:=testAmp/cond2Amp;
+    deltaAmp2:=testAmp-cond2Amp;
+    ratioAmp3:=cond2Amp/cond1Amp;
+    deltaAmp3:=cond2Amp-cond1Amp;
+    cond1Onesixthlevel:=cond1Trough+cond1Amp/6;
+    cond2Onesixthlevel:=cond2Trough+cond2Amp/6;
+    testOnesixthlevel:=testTrough+testAmp/6;
+    cond1StartThreshT:=ChanSearch(wavech%,7,burststart[j%]-0.003,burststart[j%],cond1Onesixthlevel);
+    cond1EndThreshT:=ChanSearch(wavech%,8,burststart[j%],burststart[j%]+0.013,cond1Onesixthlevel);
+    cond1Dur:=(cond1EndThreshT-cond1StartThreshT)*1000;
+    cond2StartThreshT:=ChanSearch(wavech%,7,lastSpike-0.003,lastSpike,cond2Onesixthlevel);
+    cond2EndThreshT:=ChanSearch(wavech%,8,lastSpike, lastSpike+0.013,cond2Onesixthlevel);
+    cond2Dur:=(cond2EndThreshT-cond2StartThreshT)*1000;
+    testStartThreshT:=ChanSearch(wavech%,7,burstend[j%]-0.003, burstend[j%],testOnesixthlevel);
+    testEndThreshT:=ChanSearch(wavech%,8,burstend[j%],burstend[j%]+0.013, testOnesixthlevel);
+    testDur:=(testEndThreshT-testStartThreshT)*1000;
+    ratioDur1:=testDur/cond1Dur;
+    deltaDur1:=testDur-cond1Dur;
+    ratioDur2:=testDur/cond2Dur;
+    deltaDur2:=testDur-cond2Dur;
+    ratioDur3:=cond2Dur/cond1Dur;
+    deltaDur3:=cond2Dur-cond1Dur;
+    
+    
+    Printlog("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,",trainstart[j%], lastStim, trainend[j%], interv, delCond1, delcond2, delTest, ratioDel1,deltaDel1, ratiodel2, deltaDel2, ratioDel3, deltaDel3);
+    PrintLog("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,",cond1Trough,cond2Trough,testTrough,ratioTrough1,deltaTrough1, ratioTrough2, deltaTrough2, ratioTrough3, deltaTrough3,cond1Peak, cond2Peak, testPeak, ratioPeak1, deltaPeak1);
+    Printlog("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,",ratioPeak2, deltaPeak2, ratioPeak3, deltaPeak3, cond1Amp, cond2Amp, testAmp, ratioAmp1, deltaAmp1, ratioAmp2, deltaAmp2, ratioAmp3, deltaAmp3, cond1Dur, cond2Dur, testDur);
+    PrintLog("%f,%f,%f,%f,%f,%f\n",ratioDur1, deltaDur1, ratioDur2, deltaDur2, ratioDur3, deltaDur3);
+next
+
+ChanDelete(waveDup%,1);
+Printlog ("\n"); 'add empty line                                                                                                                                   
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

@@ -1,0 +1,851 @@
+
+'"pylPhConsec" - pyloric phase consecutive.
+
+'Script to do pyloric phase analysis (PD, LP, PY) from consecutive files. This is intended for large series of files but you can
+'also use it for single files. It lets you do threshold based spike detection, burst detection and phase analysis all in one go.
+'The idea is that it actually lets you look at every file so you can determine if your spike and burst detection went ok, but it
+'keeps the spike detection thresholds and burst detection values between consecutive files.
+
+'Starting the script opens a browser window. You specify a folder and a starting file. The script will then consecutively open
+'all files (in lexicographic order) that follow the one you specified.
+
+'A pop-up window asks you for the batch start time. The default is zero, but if you start at a later file in the experiment, you
+'can type in the real start time (with respect to the entire experiment). This will be added to all returned values that keep track
+'of the experiment time. These are called "relative times" in the analysis output.
+
+'Then the first file is opened. A quarter of the file time is displayed and all channels are y-axis optimized. You can at all times
+'use the x and y axis functions to change the view. From here on, all interactions use the "interaction toolbar" at the top of the
+'spike2 window. You will at any step have the option to either stop the script, skip the file or do whatever action is specified for
+'each step. "Skip file" will close the file and open the next one without returning any values. However, the file time of the skipped
+'file is counted for the total experiment time.
+'Click "analyze" to start working on the file.
+
+'If you clicked "analyze", the display will switch to a smaller time window. Three Horizontal cursors are dropped into the time view.
+'They are labeled "PD", "LP", and "PY" and placing them in the appropriate channel at the appropriate voltage level will set the
+'threshold for spike detection. Both "data rising through level" and "data falling through level" modes work and are used automatically.
+
+'If you clicked "ok", event channels that hold the spike times are displayed on top of the corresponding waveform channels. If you are
+'not happy with the thresholds you set, you can click "repeat spike detection". The HCursors will now be at the levels you set them before.
+'If there are larger spikes in any of the channels that you want to get rid of, clicking "remove large spikes" will display an HCursor
+'that you can set at the appropriate level for those larger spikes. They are then subtracted from the event channel.
+
+'Clicking "set burst markers" will display marker channels that hold the burst start and end times for each channel. They are set to default
+'values, but you can use "revise burst detection" to set the maximum spike interval and minimum number of spikes for burst detection manually
+'for each channel.
+
+'If you click "return stats", a text file is automatically saved to the same directory. This holds cycle to cycle phase analysis values for
+'"valid" cycles (i.e., only cycles where all three neurons burst). At the same time, cycle to cycle values are written into the log window.
+'These include every PD cycle. If one of the follower neurons is skipping a burst, empty spaces are returned. The idea is that you can later
+'save the log window as a text file that holds all the values from one experiment. You can also save it in between and then start again after
+'whatever file you processed last.
+
+'The next file is then opened automatically. All threshold and burst detection values will now be the ones you specified in the last file, unless
+'you change them again.
+
+'Dirk Bucher, March 2005
+'---------------------------------------------------------------------------------------------------------------------------
+var okOpen%;
+WindowVisible(3);
+okOpen%:=FileOpen("",0); 'opens menu to select directory and .smr file, "ok" opens selected file
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+if okOpen%<>1 then
+	FrontView (App (3));'brings script to the front...
+	FileClose (App (3));'...and closes it
+endif
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+var fname$,fend$;
+'get the file name of the selected file
+fname$:=FileName$(3);
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+var nFiles%, Fnames$[1000];
+nFiles%:= FileList (Fnames$[], 0); 'gets list of filenames (only .smr) and counts them
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+'set variables
+var PDlevel, LPlevel, PYlevel, PDch%, LPch%, PYch%, p%, L%, y%,vh%, vhMasterText%;
+var i%, name$, offsetT,startT,j%, chList%[20], okCursor%, okAnalyze%, okT%, okSpikes%, ok4%,nChan%, okBursts%,trailN%,trN$, windname$,outfile%;
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+i%:=-1; 'set counter to -1
+repeat i%:=i%+1;				'add 1 to counter at every iteration. starts with 0, because counter was set to -1 above.
+until Fnames$[i%] = fname$; 'goes through the list of files until it finds the open one
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+FileClose(); 'close the file
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+DlgCreate("Set"); 'Create dialog to set an offset time, in case this is not the first file
+DlgReal(1,"Batch Start Time [s]: ",-100000,1000000);
+startT:=0;
+okT%:=DlgShow (startT);
+
+if okT%<>1 then
+	FrontView (App (3));'brings script to the front...
+	FileClose (App(3));'...and closes it
+	halt
+endif
+
+offsetT :=startT; 'set offset time to start time
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+if startT=0 then
+	Frontview (LogHandle ()); 'bring log window to the front
+	EditSelectAll();
+	EditClear();
+	Printlog ("%s,%s%s,%s%s,%s%s,%s%s, ", "file number", "PD", " cycle#", "PD"," total#cycles", "PD"," burststart","PD"," burstend");
+	Printlog ("%s%s,%s%s,%s,%s,%s%s,","PD"," relative burststart","PD"," relative burstend"," cycle period", "inst cycle freq", "PD"," duration");
+	Printlog ("%s%s,%s%s%s,%s%s%s,", "PD"," dutycycle","#spikes in ","PD"," burst","spikefreq in ","PD"," burst");
+	Printlog ("%s%s,%s%s,%s%s,","LP"," burststart","LP"," burstend","LP"," relative burststart");
+	Printlog ("%s%s,%s%s,%s%s,%s%s%s%s,%s%s,%s%s,","LP"," relative burstend","LP"," on delay","LP"," off delay","PD", "-","LP"," gap","LP"," on phase", "LP"," off phase");
+	Printlog ("%s%s,%s%s,%s%s%s,", "LP"," duration","LP", " dutycycle","#spikes in ","LP"," burst");
+	Printlog ("%s%s%s,","spikefreq in ","LP"," burst");
+	Printlog ("%s%s,%s%s,%s%s,%s%s,%s%s,%s%s,","PY"," burststart","PY"," burstend","PY"," relative burststart","PY"," relative burstend","PY"," on delay", "PY"," off delay");
+	Printlog ("%s%s%s%s,%s%s%s%s,%s%s,%s%s,", "PD", "-","PY"," gap","LP", "-","PY"," gap","PY"," on phase", "PY"," off phase");
+	Printlog ("%s%s,%s%s,%s%s%s,%s%s%s,", "PY"," duration","PY"," dutycycle","#spikes in ","PY"," burst","spikefreq in ","PY"," burst");
+	Printlog ("%s%s%s%s,%s%s%s%s", "LP", "-","PY"," delay", "LP", "-","PY"," phasedelay\n");
+	FrontView (App (3));		'brings script to front...
+endif
+'---------------------------------------------------------------------------------------------------------------------------
+
+'---------------------------------------------------------------------------------------------------------------------------
+for j%:=i% to nFiles%-1 step 1 do 'loop through all files
+  
+	name$ := Fnames$[j%];'get current file name
+	vh%:=FileOpen(name$, 0, 1);'open file and make it visible
+	WindowVisible(3);
+	trN$:=FileName$(4);
+	windname$:=Filename$(3);
+	trailN%:=val(trN$);
+	XRange(MaxTime()/2,MaxTime()/2+MaxTime()/4); 'show from 1/2 of file to 3/4
+	Optimise(-1); 'optimize y-range in all channels
+	okAnalyze%:=Interact("what do you want to do?", 504,0,"Analyze","Skip this file","Stop Script"); 'let user interact
+	
+	'------------------------------------------------------------------------------------------------------------------------
+	'------------------------------------------------------------------------------------------------------------------------
+	if okAnalyze%=3 then'if "Stop Script" was clicked... 																
+		FrontView (App (3));'brings script to the front...
+		FileClose (App(3));'...and closes it
+	halt
+	endif
+	'------------------------------------------------------------------------------------------------------------------------
+	'------------------------------------------------------------------------------------------------------------------------
+
+	'------------------------------------------------------------------------------------------------------------------------
+	'------------------------------------------------------------------------------------------------------------------------
+	if okAnalyze%=1 then'if "analyze" was clicked																		
+
+		'---------------------------------------------------------------------------------------------------------------------
+		'---------------------------------------------------------------------------------------------------------------------
+		'---------------------------------------------------------------------------------------------------------------------
+		repeat'1
+
+			Fontset("arial", 14, 2); 'set font to bold arial 14
+			XRange(MaxTime()/2,MaxTime()/2+MaxTime()/60); 'show from middle of file to middle + 1/60
+			Optimise(-1); 'optimize y-range in all channels
+			ChanList(chList%[], 2049); 'gets a list of all visible waveform channels
+			HCursorDelete(-1); 'deletes all present Hcursors
+		
+			p%:=-1; 'set counter to -1
+			repeat p%:=p%+1;'2 			'add 1 to counter at every iteration
+			until chList%[p%]=PDch% '2		until channel index is found that matches channel number from the previous file...
+			or p%>chList%[0];'...or counter gets larger than number of present channels
+		
+			L%:=-1;
+			repeat L%:=L%+1; '3
+			until chList%[L%]=LPch%'3
+			or L%>chList%[0];
+			
+			y%:=-1;
+			repeat y%:=y%+1;'4
+			until chList%[y%]=PYch%'4
+			or y%>chList%[0];	
+		
+			repeat '5
+		
+				ChanDelete("m1,m2,m3");
+			
+				if p%>chList%[0] 'if all counters haven't found the channel numbers from a previous channel...
+				or L%>chList%[0]
+				or y%>chList%[0]
+				then
+			
+					var yH, yL;
+			
+					if chList%[0]<1 then 'if there is no waveform channel visible...
+					
+						message("No waveform channels visible");
+						FrontView (App (3));'brings script to the front...
+						FileClose (App(3));'...and closes it
+						halt
+					endif
+					if chList%[0]>2 then 'if there are more than 2 waveform channels visible...
+			
+						HCursorNew(chList%[1]); 'put new Hcursors in the first three visible channels
+						HCursorNew(chList%[2]);
+						HCursorNew(chList%[3]);
+					
+					endif
+					if chList%[0]=1 or chList%[0]=2 then 'if there are only one or two waveform channels...
+						yH:=YHigh(chList%[1]); 'get y-axis maximum from first visible channel
+						yL:=YLow(chList%[1]);  'get y-axis minimum from first visible channel
+						HCursorNew(chList%[1]); 'put first Hcursor in first channel (will be in the middle)
+						HCursorNew(chList%[1], yL+(yH-yL)*0.9); 'put second Hcursor in the upper region
+						HCursorNew(chList%[1], yL+(yH-yL)*0.1); 'put third Hcursor in the lower region
+					endif
+			
+				else
+			
+					HCursorNew(PDch%); 
+					HCursorNew(LPch%);
+					HCursorNew(PYch%);
+					HCursor(1,PDlevel);
+					HCursor(2,LPlevel);
+					HCursor(3,PYlevel);
+			
+				endif
+			
+				HCursorLabel(4,1,"PD"); 'set label strings for the cursors
+				HCursorLabel(4,2,"LP");
+				HCursorLabel(4,3,"PY");
+				okCursor%:=Interact("place Hcursors", 504,0,"           OK           ","Stop Script", "Skip this file"); 'let user interact to place the cursors
+			
+				if okCursor%=2 then
+					HCursorDelete(-1); 'deletes all present Hcursors
+					FrontView (App (3));'brings script to the front...
+					FileClose (App (3));'...and closes it
+					halt
+				endif
+
+				if okCursor%=1 then
+			
+					PDlevel:=HCursor(1); 'get Hcursor voltage values
+					PDch%:=HCursorChan(1); 'get channel numbers for the Hcursors
+					LPlevel:=HCursor(2);
+					LPch%:=HCursorChan(2);
+					PYlevel:=HCursor(3);
+					PYch%:=HCursorChan(3);
+						
+					var memPD%, memLP%, memPY%,mode%;
+			
+					memPD%:=MemChan(2);'creates a new buffer channel, event type
+			
+					if PDlevel<0 then'set mode variable for the MemImport function below to either
+						mode%:=3;'"rising" or "falling", dependent on the sign of the voltage value
+					else
+						mode%:=2;
+					endif
+			
+					MemImport(memPD%, PDch%, 0, MaxTime() ,mode% , 0.001, PDlevel);'imports the events to the buffer channel
+					ChanShow(memPD%);'shows buffer channel
+					ChanTitle$(memPD%,"PDspikes");'names buffer channel
+					DrawMode(memPD%,2);'sets channel draw mode to "lines"
+				
+					memLP%:=MemChan(2);'creates a new buffer channel, event type
+				
+					if LPlevel<0 then'set mode variable for the MemImport function below to either
+						mode%:=3;'"rising" or "falling", dependent on the sign of the voltage value
+					else
+						mode%:=2;
+					endif
+			
+					MemImport(memLP%, LPch%, 0, MaxTime() ,mode% , 0.001, LPlevel);'imports the events to the buffer channel
+					ChanShow(memLP%);'shows buffer channel
+					ChanTitle$(memLP%,"LPspikes");'names buffer channel
+					DrawMode(memLP%,2);'sets channel draw mode to "lines"
+				
+					memPY%:=MemChan(2);'creates a new buffer channel, event type		
+
+					if PYlevel<0 then'set mode variable for the MemImport function below to either
+						mode%:=3;'"rising" or "falling", dependent on the sign of the voltage value
+					else
+						mode%:=2;
+					endif
+				
+					MemImport(memPY%, PYch%, 0, MaxTime() ,mode% , 0.001, PYlevel);'imports the events to the buffer channel
+					ChanShow(memPY%);'shows buffer channel
+					ChanTitle$(memPY%,"PYspikes");'names buffer channel
+					DrawMode(memPY%,2);'sets channel draw mode to "lines"
+				
+					ChanOrder(PDch%, -1, "m1");
+					ChanOrder(LPch%, -1, "m2");	
+					ChanOrder(PYch%, -1, "m3");
+				
+				
+					HCursorDelete(-1); 'deletes all present Hcursors
+				
+					
+					okSpikes%:=Interact("what do you want to do?", 504,0,"Set Burst markers","Repeat Spk Detect","Remove Lrg Spks PY Chan",
+					"Remove Lrg Spks LP Chan","Remove Lrg Spks PD Chan","Stop Script", "Skip this file"); 'let user interact to place the cursors
+				
+					if okSpikes%=6 then
+						HCursorDelete(-1); 'deletes all present Hcursors
+						Fontset("Times", 8, 0); 'reset font to plain times 8
+						FileClose (0,-1);
+						FrontView (App (3));'brings script to the front...
+						FileClose (App (3));'...and closes it
+						halt
+					endif
+					
+					if okspikes%=3 or okspikes%=4 or okspikes%=5 then
+					
+					
+					
+						var nlrg%,spk%, lrgspk[100000], LargeLevel, Largech%, memLarge%, memSmall%;
+				
+						repeat	
+							HCursorDelete(-1); 'deletes all present Hcursors
+							
+							if okspikes%=3 then
+							HCursorNew(PYch%);
+							memSmall%:=memPY%;
+							endif
+
+							if okspikes%=4 then
+							HCursorNew(LPch%);
+							memSmall%:=memLP%;
+							endif
+
+							if okspikes%=5 then
+							HCursorNew(PDch%);
+							memSmall%:=memPD%;
+							endif
+
+							HCursorLabel(4,1,"Large Spikes"); 'set label strings for the cursors
+						
+							ok4%:=Interact("set HCursor", 504,0,"           OK           ","Cancel"); 'let user interact to place the cursor
+						
+							if ok4%=1 then
+					
+								Largelevel:=HCursor(1); 'get Hcursor voltage values
+								Largech%:=HCursorChan(1); 'get channel numbers for the Hcursor
+				
+								memLarge%:=MemChan(2);'creates a new buffer channel, event type
+					
+								if Largelevel<0 then'set mode variable for the MemImport function below to either
+									mode%:=3;'"rising" or "falling", dependent on the sign of the voltage value
+								else
+									mode%:=2;
+								endif
+					
+								MemImport(memLarge%, Largech%, 0, MaxTime() ,mode% , 0.001, Largelevel);'imports the events to the buffer channel
+								nlrg%:=ChanData(memLarge%,lrgspk[],0,MaxTime()); 'get large spike times and total number
+					
+								for spk% := 0 to nlrg%-1 step 1 do 'step through LP spikes
+									MemDeleteTime(memSmall%,0,lrgspk[spk%],0.004); 'delete every LP spike from the PYspikes buffer channel
+								next;
+								ChanDelete(memLarge%);
+								HCursorDelete(-1); 'deletes all present Hcursors
+							endif
+
+							HCursorDelete(-1); 'deletes all present Hcursors
+							okSpikes%:=Interact("what do you want to do?", 504,0,"Set Burst markers","Repeat Spk Detect","Remove Lrg Spks PY Chan",
+							"Remove Lrg Spks LP Chan","Remove Lrg Spks PD Chan","Stop Script", "Skip this file"); 'let user interact to place the cursors
+
+							if okSpikes%=6 then
+								HCursorDelete(-1); 'deletes all present Hcursors
+								Fontset("Times", 8, 0); 'reset font to plain times 8
+								FileClose (0,-1);
+								FrontView (App (3));'brings script to the front...
+								FileClose (App (3));'...and closes it
+								halt
+							endif
+					
+						until okSpikes%<>3 and okSpikes%<>4 and okSpikes%<>5;'6
+				
+						endif
+
+				
+				endif
+		
+			until okSpikes%=1 or okSpikes%=7 or okCursor%=3;'5
+			
+			if okSpikes%=1 then
+			
+				var PDburstCh%, LPburstCh%, PYburstCh%,PDmax, PDnum%, LPmax, LPnum%,PYmax, PYnum%;
+
+				if PDmax=0 then
+					PDmax:=0.1;
+					PDnum%:=3;
+					LPmax:=0.1;
+					LPnum%:=3;
+					PYmax:=0.1;
+					PYnum%:=3;
+				 endif
+			
+				PDburstCh%:=MemChan(5); 'new buffer channel is created (marker type)
+				BurstMake(PDburstCh%,memPD%,0,MaxTime(),PDmax,PDmax,PDnum%);'this is the actual marking of the bursts, using the assigned parameters
+				ChanShow(PDburstCh%); 'show the new marker channel in the time view
+				ChanTitle$(PDburstCh%,"PDbursts");'name it
+				ChanOrder(memPD%, -1, "m4");
+			
+				LPburstCh%:=MemChan(5); 'new buffer channel is created (marker type)
+				BurstMake(LPburstCh%,memLP%,0,MaxTime(),LPmax,LPmax,LPnum%);'this is the actual marking of the bursts, using the assigned parameters
+				ChanShow(LPburstCh%); 'show the new marker channel in the time view
+				ChanTitle$(LPburstCh%,"LPbursts");'name it
+				ChanOrder(memLP%, -1, "m5");
+				
+				PYburstCh%:=MemChan(5); 'new buffer channel is created (marker type)
+				BurstMake(PYburstCh%,memPY%,0,MaxTime(),PYmax,PYmax,PYnum%);'this is the actual marking of the bursts, using the assigned parameters
+				ChanShow(PYburstCh%); 'show the new marker channel in the time view
+				ChanTitle$(PYburstCh%,"PYbursts");'name it
+				ChanOrder(memPY%, -1, "m6");
+			
+				okBursts%:=Interact("what do you want to do?", 504,0,"Return statistics","Revise Bursts","Stop Script", "Skip this file"); 'let user interact to place the cursors
+			
+				if okBursts%=3 then
+					HCursorDelete(-1); 'deletes all present Hcursors
+					Fontset("Times", 8, 0); 'reset font to plain times 8
+					FileClose (0,-1);
+					FrontView (App (3));'brings script to the front...
+					FileClose (App (3));'...and closes it
+					halt
+				endif
+			
+				if okBursts%=2 then
+			
+					var okBurstDetect%;
+			
+			
+					repeat '7
+			
+						DlgCreate("Burst Detection");
+						DlgText("PD burst parameters:",0,1);
+						DlgReal (1, "Maximum spike interval", 0,100,0,2);
+						DlgInteger (2, "Minimum number of events", 2,100,0,3);
+						DlgText("LP burst parameters:", 0,5);
+						DlgReal (3, "Maximum spike interval", 0,100,0,6);
+						DlgInteger (4, "Minimum number of events", 2,100,0,7);
+						DlgText("PY burst parameters:",0,9);
+						DlgReal (5, "Maximum spike interval", 0,100,0,10);
+						DlgInteger (6, "Minimum number of events", 2,100,0,11);
+				
+						okBurstDetect%:=DlgShow(PDmax, PDnum%, LPmax, LPnum%,PYmax, PYnum%);
+				
+						if okBurstDetect%=1 then
+							MemDeleteTime(PDburstCh%, 3, 0, MaxTime());
+							MemDeleteTime(LPburstCh%, 3, 0, MaxTime());
+							MemDeleteTime(PYburstCh%, 3, 0, MaxTime());
+							BurstMake(PDburstCh%,memPD%,0,MaxTime(),PDmax, PDmax, PDnum%);
+							BurstMake(LPburstCh%,memLP%,0,MaxTime(),LPmax, LPmax, LPnum%);
+							BurstMake(PYburstCh%,memPY%,0,MaxTime(),PYmax, PYmax, PYnum%);
+							okBursts%:=Interact("what do you want to do?", 504,0,"Return statistics","Revise Bursts","Stop Script", "Skip this file"); 'let user interact to place the cursors
+							if okBursts%=3 then
+								HCursorDelete(-1); 'deletes all present Hcursors
+								Fontset("Times", 8, 0); 'reset font to plain times 8
+								FileClose (0,-1);
+								FrontView (App (3));'brings script to the front...
+								FileClose (App (3));'...and closes it
+								halt
+							endif
+						endif
+						
+						if okBurstDetect%<>1 then
+							okBursts%:=Interact("what do you want to do?", 504,0,"Return statistics","Revise Bursts","Stop Script", "Skip this file"); 'let user interact to place the cursors
+							if okBursts%=3 then
+								HCursorDelete(-1); 'deletes all present Hcursors
+								Fontset("Times", 8, 0); 'reset font to plain times 8
+								FileClose (0,-1);
+								FrontView (App (3));'brings script to the front...
+								FileClose (App (3));'...and closes it
+								halt
+							endif
+						endif
+				
+					until okBursts%=1 or okBursts%=4;'7
+				endif
+ 				
+				if okbursts%=1 then
+
+					outfile%:=FileNew(1);
+					Frontview(outfile%);
+					
+					Print ("%s,%s%s,%s%s,%s%s,%s%s, ", "file number", "PD", " cycle#", "PD"," total#cycles", "PD"," burststart","PD"," burstend");
+					Print ("%s%s,%s%s,%s,%s,%s%s,","PD"," relative burststart","PD"," relative burstend"," cycle period", "inst cycle freq", "PD"," duration");
+					Print ("%s%s,%s%s%s,%s%s%s,", "PD"," dutycycle","#spikes in ","PD"," burst","spikefreq in ","PD"," burst");
+					Print ("%s%s,%s%s,%s%s,","LP"," burststart","LP"," burstend","LP"," relative burststart");
+					Print ("%s%s,%s%s,%s%s,%s%s%s%s,%s%s,%s%s,","LP"," relative burstend","LP"," on delay","LP"," off delay","PD", "-","LP"," gap","LP"," on phase", "LP"," off phase");
+					Print ("%s%s,%s%s,%s%s%s,", "LP"," duration","LP", " dutycycle","#spikes in ","LP"," burst");
+					Print ("%s%s%s,","spikefreq in ","LP"," burst");
+					Print ("%s%s,%s%s,%s%s,%s%s,%s%s,%s%s,","PY"," burststart","PY"," burstend","PY"," relative burststart","PY"," relative burstend","PY"," on delay", "PY"," off delay");
+					Print ("%s%s%s%s,%s%s%s%s,%s%s,%s%s,", "PD", "-","PY"," gap","LP", "-","PY"," gap","PY"," on phase", "PY"," off phase");
+					Print ("%s%s,%s%s,%s%s%s,%s%s%s,", "PY"," duration","PY"," dutycycle","#spikes in ","PY"," burst","spikefreq in ","PY"," burst");
+					Print ("%s%s%s%s,%s%s%s%s", "LP", "-","PY"," delay", "LP", "-","PY"," phasedelay\n");
+					Frontview(vh%);
+					FrontView (App (3));'brings script to the front...
+
+					'***************************************************************************************************************************
+					'***************************************************************************************************************************
+	
+					'putting burst start and end times into separate arrays
+	
+					var refburststart[100000],burststart[100000],refburstend[100000], burstend[100000];		
+					var nrefburststart%,nrefburstend%,nburststart%,nburstend%;
+					var burststart2[100000],burstend2[100000],nburststart2%,nburstend2%;
+		
+					'for reference burstchannel:
+					MarkMask(PDburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(PDburstch%,0,-1,-1);		'set all codes off
+					MarkMask(PDburstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+	
+					nrefburststart%:=ChanData(PDburstch%,refburststart[],0,MaxTime());	'get levator burst start times
+	
+					MarkMask(PDburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(PDburstch%,0,-1,-1);		'set all codes off
+					MarkMask(PDburstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+	
+					nrefburstend%:=ChanData(PDburstch%,refburstend[],refburststart[0],MaxTime());	'get levator burst end times
+					MarkMask(PDburstch%,-1,1,-1);  'reset = include all codes
+	
+					'for burstchannel:
+					MarkMask(LPburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(LPburstch%,0,-1,-1);		'set all codes off
+					MarkMask(LPburstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+	
+					nburststart%:=ChanData(LPburstch%,burststart[],0,MaxTime());	'get depressor burst start times
+	
+					MarkMask(LPburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(LPburstch%,0,-1,-1);		'set all codes off
+					MarkMask(LPburstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+	
+					nburstend%:=ChanData(LPburstch%,burstend[],burststart[0],MaxTime());	'get depressor burst end times
+					MarkMask(LPburstch%,-1,1,-1);  'reset = include all codes
+	
+	
+					'for burstchannel2:
+					MarkMask(PYburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(PYburstch%,0,-1,-1);		'set all codes off
+					MarkMask(PYburstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+	
+					nburststart2%:=ChanData(PYburstch%,burststart2[],0,MaxTime());	'get depressor burst start times
+	
+					MarkMask(PYburstch%,-1,1,-1);  'reset = include all codes
+					MarkMask(PYburstch%,0,-1,-1);		'set all codes off
+					MarkMask(PYburstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+	
+					nburstend2%:=ChanData(PYburstch%,burstend2[],burststart2[0],MaxTime());	'get depressor burst end times
+					MarkMask(PYburstch%,-1,1,-1);  'reset = include all codes
+	
+	
+					'returning the actual analysis values
+	
+					var refperiod,delay,nextdelay,phase,refdutycyc,refdur,dur,refrelstart, refrelend, relstart, relend, refmeanrate, meanrate, refnspks%, nspks%;
+					var delay2,nextdelay2,phase2,dur2,relstart2, relend2, meanrate2, nspks2%, seconddelay, secondphase;
+					var dummy[100000], dummy2[100000], dummy3[100000], counter%, valstring1$, valstring2$, valstring3$;
+					var bvalid%, b2valid%, stat%;	'counter
+					var matrix[10000][100];
+
+					counter%:=-1;
+					stat%:=0;
+					b2valid%:=1;
+					bvalid%:=1;
+					
+					for stat% := 1 to nrefburststart%-2 step 1 do		' loop through all complete cycles
+	
+						refperiod := refburststart[stat%+1]-refburststart[stat%];
+	
+						repeat
+							delay:=burststart[bvalid%]-refburststart[stat%];
+							bvalid%:=bvalid%+1;
+						until delay>0 and delay<refperiod or bvalid%>nburststart%-2;;	'search for next valid cycle
+	
+						repeat
+							delay2:=burststart2[b2valid%]-refburststart[stat%];
+							b2valid%:=b2valid%+1;
+						until delay2>0 and delay2<refperiod or b2valid%>nburststart2%-2;;	'search for next valid cycle
+	
+						phase:=delay/refperiod;
+						nextdelay:=burststart[bvalid%]-refburststart[stat%];
+						phase2:=delay2/refperiod;
+						nextdelay2:=burststart2[b2valid%]-refburststart[stat%];
+	
+						if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+						
+						var fnumb%[10000],cyclecount%[10000],Ncycle%[10000],PDonTime[10000],PDoffTime[10000],PDonTimeRel[10000],PDoffTimeRel[10000],per[10000];
+						var cycfreq[10000],PDdur[10000],PDdc[10000],PDspks%[10000],PDfreq[10000],LPonTime[10000],LPoffTime[10000];
+						var LPonTimeRel[10000],LPoffTimeRel[10000],LPonDel[10000],LPoffDel[10000],PDLPgap[10000],LPonPh[10000],LPoffPh[10000];
+						var LPdur[10000],LPdc[10000],LPspks%[10000],LPfreq[10000],PYonTime[10000],PYoffTime[10000],PYonTimeRel[10000],PYoffTimeRel[10000];
+						var PYonDel[10000],PYoffDel[10000],PDPYgap[10000],LPPYgap[10000];
+						var PYonPh[10000],PYoffPh[10000],PYdur[10000],PYdc[10000],PYspks%[10000],PYfreq[10000],LPPYdel[10000],LPPYphdel[10000];
+
+							refdutycyc:=(refburstend[stat%]-refburststart[stat%])/refperiod;
+							refdur:= refburstend[stat%]-refburststart[stat%];	
+							dur:=burstend[bvalid%-1]-burststart[bvalid%-1];
+							refrelstart:=refburststart [stat%]+offsetT;
+							refrelend:=refburstend [stat%]+offsetT;
+							relstart:=burststart [bvalid%-1]+offsetT;
+							relend:=burstend [bvalid%-1]+offsetT;
+							dur2:=burstend2[b2valid%-1]-burststart2[b2valid%-1];
+							relstart2:=burststart2 [b2valid%-1]+offsetT;
+							relend2:=burstend2 [b2valid%-1]+offsetT;
+							seconddelay:=burststart2 [b2valid%-1]-burststart [bvalid%-1];
+							secondphase:=seconddelay/refperiod;
+							refnspks%:=ChanData(memPD%,dummy[],refburststart[stat%],refburstend[stat%]);
+							refmeanrate:=(refnspks%-1)/(refburstend[stat%]-refburststart[stat%]);
+							nspks%:=ChanData(memLP%,dummy2[],burststart[bvalid%-1],burstend[bvalid%-1]);
+							meanrate:=(nspks%-1)/(burstend[bvalid%-1]-burststart[bvalid%-1]);
+							nspks2%:=ChanData(memPY%,dummy3[],burststart2[b2valid%-1],burstend2[b2valid%-1]);
+							meanrate2:=(nspks2%-1)/(burstend2[b2valid%-1]-burststart2[b2valid%-1]);
+							counter%:=counter%+1;
+
+							ArrAdd(fnumb%[counter%:1],TrailN%);
+							ArrAdd(cyclecount%[counter%:1],stat%);
+							ArrAdd(Ncycle%[counter%:1],nrefburststart%-3);
+							ArrAdd(PDonTime[counter%:1],refburststart[stat%]);
+							ArrAdd(PDoffTime[counter%:1],refburstend[stat%]);
+							ArrAdd(PDonTimeRel[counter%:1],refrelstart);
+							ArrAdd(PDoffTimeRel[counter%:1],refrelend);
+							ArrAdd(per[counter%:1],refperiod);
+							ArrAdd(cycfreq[counter%:1],1/refperiod);
+							ArrAdd(PDdur[counter%:1],refdur);
+							ArrAdd(PDdc[counter%:1],refdutycyc);
+							ArrAdd(PDspks%[counter%:1],refnspks%);
+							ArrAdd(PDfreq[counter%:1],refmeanrate);
+							ArrAdd(LPonTime[counter%:1],burststart [bvalid%-1]);
+							ArrAdd(LPoffTime[counter%:1],burstend [bvalid%-1]);
+							ArrAdd(LPonTimeRel[counter%:1],relstart);
+							ArrAdd(LPoffTimeRel[counter%:1],relend);
+							ArrAdd(LPonDel[counter%:1],delay);
+							ArrAdd(LPoffDel[counter%:1],delay+dur);
+							ArrAdd(PDLPgap[counter%:1],delay-refdur);
+							ArrAdd(LPonPh[counter%:1],phase);
+							ArrAdd(LPoffPh[counter%:1],phase+dur/refperiod);
+							ArrAdd(LPdur[counter%:1],dur);
+							ArrAdd(LPdc[counter%:1],dur/refperiod);
+							ArrAdd(LPspks%[counter%:1],nspks%);
+							ArrAdd(LPfreq[counter%:1],meanrate);							
+							ArrAdd(PYonTime[counter%:1],burststart2 [b2valid%-1]);
+							ArrAdd(PYoffTime[counter%:1],burstend2 [b2valid%-1]);
+							ArrAdd(PYonTimeRel[counter%:1],relstart2);
+							ArrAdd(PYoffTimeRel[counter%:1],relend2);
+							ArrAdd(PYonDel[counter%:1],delay2);
+							ArrAdd(PYoffDel[counter%:1],delay2+dur2);
+							ArrAdd(PDPYgap[counter%:1],delay2-refdur);
+							ArrAdd(LPPYgap[counter%:1],delay2-delay-dur);
+							ArrAdd(PYonPh[counter%:1],phase2);
+							ArrAdd(PYoffPh[counter%:1],phase2+dur2/refperiod);
+							ArrAdd(PYdur[counter%:1],dur2);
+							ArrAdd(PYdc[counter%:1],dur2/refperiod);
+							ArrAdd(PYspks%[counter%:1],nspks2%);
+							ArrAdd(PYfreq[counter%:1],meanrate2);
+							ArrAdd(LPPYdel[counter%:1],seconddelay);
+							ArrAdd(LPPYphdel[counter%:1],secondphase);
+
+
+							Printlog ("%d,%d,%d,%f,%f,%f,%f,%f,", TrailN%, stat%, nrefburststart%-3,refburststart[stat%], refburstend[stat%], refrelstart, refrelend, refperiod);
+	 						Printlog ("%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate, burststart [bvalid%-1],burstend[bvalid%-1],relstart, relend, delay, delay+dur, delay-refdur);
+	 						Printlog ("%f,%f,%f,%f,%d,%f,", phase, phase+dur/refperiod, dur, dur/refperiod, nspks%, meanrate);
+							Printlog ("%f,%f,%f,%f,%f,%f,%f,%f,",burststart2 [b2valid%-1],burstend2[b2valid%-1],relstart2, relend2, delay2, delay2+dur2, delay2-refdur, delay2-delay-dur);
+					 		Printlog ("%f,%f,%f,%f,%d,%f,", phase2, phase2+dur2/refperiod, dur2, dur2/refperiod, nspks2%, meanrate2);
+							Printlog ("%f, %f\n", seconddelay, secondphase);
+			
+	
+						endif
+
+						if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and (phase2 > 1.0 or phase2 < 0.0 or (nextdelay2 < refperiod and nextdelay2>0)) then
+							
+							refdutycyc:=(refburstend[stat%]-refburststart[stat%])/refperiod;
+							refdur:= refburstend[stat%]-refburststart[stat%];	
+							dur:=burstend[bvalid%-1]-burststart[bvalid%-1];
+							refrelstart:=refburststart [stat%]+offsetT;
+							refrelend:=refburstend [stat%]+offsetT;
+							relstart:=burststart [bvalid%-1]+offsetT;
+							relend:=burstend [bvalid%-1]+offsetT;
+							refnspks%:=ChanData(memPD%,dummy[],refburststart[stat%],refburstend[stat%]);
+							refmeanrate:=(refnspks%-1)/(refburstend[stat%]-refburststart[stat%]);
+							nspks%:=ChanData(memLP%,dummy2[],burststart[bvalid%-1],burstend[bvalid%-1]);
+							meanrate:=(nspks%-1)/(burstend[bvalid%-1]-burststart[bvalid%-1]);
+
+							Printlog ("%d,%d,%d,%f,%f,%f,%f,%f,", TrailN%, stat%, nrefburststart%-3,refburststart[stat%], refburstend[stat%], refrelstart, refrelend, refperiod);
+	 						Printlog ("%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate, burststart [bvalid%-1],burstend[bvalid%-1],relstart, relend, delay, delay+dur, delay-refdur);
+	 						Printlog ("%f,%f,%f,%f,%d,%f,", phase, phase+dur/refperiod, dur, dur/refperiod, nspks%, meanrate);
+							Printlog (",,,,,,,,,,,,,,,");
+							Printlog ("\n");
+
+						endif
+						
+						if phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod and (phase > 1.0 or phase < 0.0 or (nextdelay < refperiod and nextdelay>0)) then
+							
+							refdutycyc:=(refburstend[stat%]-refburststart[stat%])/refperiod;
+							refdur:= refburstend[stat%]-refburststart[stat%];	
+							refrelstart:=refburststart [stat%]+offsetT;
+							refrelend:=refburstend [stat%]+offsetT;
+							dur2:=burstend2[b2valid%-1]-burststart2[b2valid%-1];
+							relstart2:=burststart2 [b2valid%-1]+offsetT;
+							relend2:=burstend2 [b2valid%-1]+offsetT;
+							refnspks%:=ChanData(memPD%,dummy[],refburststart[stat%],refburstend[stat%]);
+							refmeanrate:=(refnspks%-1)/(refburstend[stat%]-refburststart[stat%]);
+							nspks2%:=ChanData(memPY%,dummy3[],burststart2[b2valid%-1],burstend2[b2valid%-1]);
+							meanrate2:=(nspks2%-1)/(burstend2[b2valid%-1]-burststart2[b2valid%-1]);
+
+							Printlog ("%d,%d,%d,%f,%f,%f,%f,%f,", TrailN%, stat%, nrefburststart%-3,refburststart[stat%], refburstend[stat%], refrelstart, refrelend, refperiod);
+	 						Printlog ("%f,%f,%f,%d,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate);
+	 						Printlog (",,,,,,,,,,,,,");
+							Printlog ("%f,%f,%f,%f,%f,%f,%f,",burststart2 [b2valid%-1],burstend2[b2valid%-1],relstart2, relend2, delay2, delay2+dur2, delay2-refdur);
+							Printlog (",");
+					 		Printlog ("%f,%f,%f,%f,%d,%f,", phase2, phase2+dur2/refperiod, dur2, dur2/refperiod, nspks2%, meanrate2);
+							Printlog (",");
+							Printlog ("\n");
+
+						endif
+						
+						if (phase2 > 1.0 or phase2 < 0.0 or (nextdelay2 < refperiod and nextdelay2>0)) and (phase > 1.0 or phase < 0.0 or (nextdelay < refperiod and nextdelay>0)) then
+							
+							refdutycyc:=(refburstend[stat%]-refburststart[stat%])/refperiod;
+							refdur:= refburstend[stat%]-refburststart[stat%];	
+							refrelstart:=refburststart [stat%]+offsetT;
+							refrelend:=refburstend [stat%]+offsetT;
+							refnspks%:=ChanData(memPD%,dummy[],refburststart[stat%],refburstend[stat%]);
+							refmeanrate:=(refnspks%-1)/(refburstend[stat%]-refburststart[stat%]);
+
+							Printlog ("%d,%d,%d,%f,%f,%f,%f,%f,", TrailN%, stat%, nrefburststart%-3,refburststart[stat%], refburstend[stat%], refrelstart, refrelend, refperiod);
+	 						Printlog ("%f,%f,%f,%d,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate);
+	 						Printlog (",,,,,,,,,,,,,");
+							Printlog (",,,,,,,");
+							Printlog (",");
+					 		Printlog (",,,,,,");
+							Printlog (",");
+							Printlog ("\n");
+
+						endif
+
+
+						bvalid%:=0;
+						b2valid%:=0;
+	
+	
+					next	
+
+					ArrAdd(matrix[][0],fnumb%[]);
+					ArrAdd(matrix[][1],cyclecount%[]);
+					ArrAdd(matrix[][2],Ncycle%[]);
+					ArrAdd(matrix[][3],PDonTime[]);
+					ArrAdd(matrix[][4],PDoffTime[]);
+					ArrAdd(matrix[][5],PDonTimeRel[]);
+					ArrAdd(matrix[][6],PDoffTimeRel[]);
+					ArrAdd(matrix[][7],per[]);
+					ArrAdd(matrix[][8],cycfreq[]);
+					ArrAdd(matrix[][9],PDdur[]);
+					ArrAdd(matrix[][10],PDdc[]);
+					ArrAdd(matrix[][11],PDspks%[]);
+					ArrAdd(matrix[][12],PDfreq[]);
+					ArrAdd(matrix[][13],LPonTime[]);
+					ArrAdd(matrix[][14],LPoffTime[]);
+					ArrAdd(matrix[][15],LPonTimeRel[]);
+					ArrAdd(matrix[][16],LPoffTimeRel[]);
+					ArrAdd(matrix[][17],LPonDel[]);
+					ArrAdd(matrix[][18],LPoffDel[]);
+					ArrAdd(matrix[][19],PDLPgap[]);
+					ArrAdd(matrix[][20],LPonPh[]);
+					ArrAdd(matrix[][21],LPoffPh[]);
+					ArrAdd(matrix[][22],LPdur[]);
+					ArrAdd(matrix[][23],LPdc[]);
+					ArrAdd(matrix[][24],LPspks%[]);
+					ArrAdd(matrix[][25],LPfreq[]);
+					ArrAdd(matrix[][26],PYonTime[]);
+					ArrAdd(matrix[][27],PYoffTime[]);
+					ArrAdd(matrix[][28],PYonTimeRel[]);
+					ArrAdd(matrix[][29],PYoffTimeRel[]);
+					ArrAdd(matrix[][30],PYonDel[]);
+					ArrAdd(matrix[][31],PYoffDel[]);
+					ArrAdd(matrix[][32],PDPYgap[]);
+					ArrAdd(matrix[][33],LPPYgap[]);
+					ArrAdd(matrix[][34],PYonPh[]);
+					ArrAdd(matrix[][35],PYoffPh[]);
+					ArrAdd(matrix[][36],PYdur[]);
+					ArrAdd(matrix[][37],PYdc[]);
+					ArrAdd(matrix[][38],PYspks%[]);
+					ArrAdd(matrix[][39],PYfreq[]);
+					ArrAdd(matrix[][40],LPPYdel[]);
+					ArrAdd(matrix[][41],LPPYphdel[]);
+
+					ArrMul(fnumb%[],0);
+					ArrMul(cyclecount%[],0);
+					ArrMul(Ncycle%[],0);
+					ArrMul(PDonTime[],0);
+					ArrMul(PDoffTime[],0);
+					ArrMul(PDonTimeRel[],0);
+					ArrMul(PDoffTimeRel[],0);
+					ArrMul(per[],0);
+					ArrMul(cycfreq[],0);
+					ArrMul(PDdur[],0);
+					ArrMul(PDdc[],0);
+					ArrMul(PDspks%[],0);
+					ArrMul(PDfreq[],0);
+					ArrMul(LPonTime[],0);
+					ArrMul(LPoffTime[],0);
+					ArrMul(LPonTimeRel[],0);
+					ArrMul(LPoffTimeRel[],0);
+					ArrMul(LPonDel[],0);
+					ArrMul(LPoffDel[],0);
+					ArrMul(PDLPgap[],0);
+					ArrMul(LPonPh[],0);
+					ArrMul(LPoffPh[],0);
+					ArrMul(LPdur[],0);
+					ArrMul(LPdc[],0);
+					ArrMul(LPspks%[],0);
+					ArrMul(LPfreq[],0);				
+					ArrMul(PYonTime[],0);
+					ArrMul(PYoffTime[],0);
+					ArrMul(PYonTimeRel[],0);
+					ArrMul(PYoffTimeRel[],0);
+					ArrMul(PYonDel[],0);
+					ArrMul(PYoffDel[],0);
+					ArrMul(PDPYgap[],0);
+					ArrMul(LPPYgap[],0);
+					ArrMul(PYonPh[],0);
+					ArrMul(PYoffPh[],0);
+					ArrMul(PYdur[],0);
+					ArrMul(PYdc[],0);
+					ArrMul(PYspks%[],0);
+					ArrMul(PYfreq[],0);
+					ArrMul(LPPYdel[],0);
+					ArrMul(LPPYphdel[],0);
+
+
+					Frontview(outfile%);
+					Print("%f\n",matrix[:counter%+1][:42]);
+					ArrMul(matrix[][],0);
+					FileSaveAs("stats_"+windname$+trN$+".txt");
+					FileClose(0);
+					Frontview(vh%);
+					Frontview(App(3));
+
+				'***************************************************************************************************************************
+				'***************************************************************************************************************************
+				endif
+
+			endif
+		
+		until okAnalyze%=2 or okCursor%=1 or okCursor%=3 or okSpikes%=7;'1
+		'---------------------------------------------------------------------------------------------------------------------
+		'---------------------------------------------------------------------------------------------------------------------
+		'---------------------------------------------------------------------------------------------------------------------
+
+	endif
+	'------------------------------------------------------------------------------------------------------------------------
+	'------------------------------------------------------------------------------------------------------------------------
+	
+
+		
+	offsetT := offsetT + MaxTime();
+		
+	Fontset("Times", 8, 0); 'reset font to plain times 8
+	HCursorDelete(-1); 'deletes all present Hcursors
+	FileClose (0,-1);
+
+next
+'---------------------------------------------------------------------------------------------------------------------------
+

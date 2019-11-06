@@ -1,0 +1,17 @@
+'"ClearProc". Script to clear all Channel Processes (like "smooth" or "rectify") from all channels. 
+
+'Dirk Bucher, Dec 2012
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+ChanProcessClear();
+
+
+FrontView (App (3));		'bring script to the front...
+FileClose (0);				'...and close it

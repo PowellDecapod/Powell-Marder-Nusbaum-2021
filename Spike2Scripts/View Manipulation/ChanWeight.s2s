@@ -1,0 +1,54 @@
+'"ChanWeight"
+
+'Script to set the relative vertical space to give a channel. Lets you choose a channel and assign a weight for this channel.
+'The standard vertical space corresponds to a weight of 1. The script calculates how much space to give each channel assuming
+'all channels have a weight of 1. Then the actual space allocated is proportional to the standard space multiplied by the weight
+'factor. This means that if you increase the weight of one channel, all other channels get less space in proportion to their original space.
+'Example: If you have three channels and give one of them the weight 2 and leave the other two at weight 1, the first channel will take up
+'1/2 of the vertical space, and each of the other ones 1/4.
+
+'Dirk Bucher, May 2006.
+
+'Expanded version now lets you choose in the interaction bar if you want to change a channel weight or reset all weights to normal.
+'Dirk Bucher, June 2007.
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var button%;
+repeat
+button%:=Interact("Choose", 356,0,"Done","Reset All Weights","Change Channel Weight"); 'let user interact
+if button%=3 then
+var ok%, chan%, weight;
+
+DlgCreate("Assign");
+DlgChan (1, "channel", 587);
+DlgReal(2, "channel weight", 0,20);
+
+ok%:=DlgShow(chan%, weight);
+
+if ok%=1 then
+
+ChanWeight(chan%,weight);
+
+endif	
+endif
+    if button%=2 then
+        
+var chlist%[30], j%;
+ChanList(chlist%[]);
+
+for j% := 1 to chlist%[0] step 1 do
+ChanWeight(chlist%[j%],1);
+    next        
+ endif       
+until button%=1;
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+

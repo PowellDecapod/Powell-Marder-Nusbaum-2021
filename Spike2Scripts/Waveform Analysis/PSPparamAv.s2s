@@ -1,0 +1,83 @@
+'"PSP parameters from an average"
+
+'This is a crude script to return PSP parameters from a waveform average. It's crude because
+'you have to set 7 vertical cursors to the right positions first, meaning you do most of the measurements
+'by hand.
+'Cursor (1) and (2) mark the time window for averaging the baseline
+'Cursor (3) marks the onset of the signal
+'Cursor (4) marks half amplitude during the rising phase
+'Cursor (5) marks the peak
+'Cursor (6) marks the half amplitude during decay
+'Cursor (7) marks the end of the time window used for measuring the area above the baseline.
+
+'Dirk Bucher, May 2002
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 4 then		'checks if the associated window is a result view
+   Message("This isn't a result view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+WindowVisible (3);		'sets the time view to the front
+
+while not ( CursorExists(1) and
+            CursorExists(2) and
+            CursorExists(3) and
+            CursorExists(4) and
+            CursorExists(5) and
+            CursorExists(6) and
+				CursorExists(7) and
+            Cursor(1)<Cursor(2)<Cursor(3)<Cursor(4)<Cursor(5)<Cursor(6)<Cursor(7)) do
+  CursorSet(0);
+  CursorSet(7);
+  CursorLabel(4,1,"baseline start");
+  CursorLabel(4,2,"baseline end");
+  CursorLabel(4,3,"signal onset");
+  CursorLabel(4,4,"halfamp rise");
+  CursorLabel(4,5,"peak");
+  CursorLabel(4,6,"halfamp fall");
+  CursorLabel(4,7,"signal end");
+  CursorLabelPos(1,90);
+  CursorLabelPos(2,90);
+  CursorLabelPos(3,90);
+  CursorLabelPos(4,90);
+  CursorLabelPos(5,90);
+  CursorLabelPos(6,90);
+  CursorLabelPos(7,90);
+  Interact("set cursors", 384,0,"OK");
+wend;
+
+var chan%[10];
+Chanlist (chan%[]);	'gets the channel number
+ 
+
+var baseline, Peak, peakT, Amp, halfstart, sweeps%;
+var halfend, halfwidth, HalfToPeak, PeakToHalf, area, ttp; 
+
+baseline:= ChanMeasure (chan%[1], 2, BinToX(Cursor(1)), BinToX(Cursor(2)));
+peakT:= BinToX(Cursor(5));
+Peak:= ChanValue (chan%[1], peakT);
+Amp:= Peak-baseline;
+halfstart:= BinToX(Cursor(4));
+halfend:= BinToX(Cursor(6));
+halfwidth:= (halfend-halfstart)*1000;
+HalfToPeak:=(peakT-halfstart)*1000;
+PeakToHalf:=(halfend-peakT)*1000;
+ttp:= (peakT-BinToX(Cursor(3)))*1000;
+sweeps%:= Sweeps();
+area:= ((ChanMeasure (chan%[1], 2, BinToX(Cursor(3)),BinToX(Cursor(7))))-baseline)*(BinToX(Cursor(7))-BinToX(Cursor(3)))*1000;
+
+Printlog ("# of sweeps, ", "baseline[mV], ","amplitude[mV], ","ttp[ms], ","ttp_1/2[ms], ","ttd_1/2[ms], ","1/2_duration, ","aab, ");
+PrintLog ("%d,%f, %f, %f, %f, %f, %f, %f\n", sweeps%, baseline, Amp, ttp, HalfToPeak, PeakToHalf, halfwidth, area);
+
+
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+

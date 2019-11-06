@@ -1,0 +1,237 @@
+'trigBurst		"triggered burst statistics"
+
+'Script to do burst analysis in episodes defined by a trigger. You need an event channel that holds the times of a trigger signal around which burst analysis should be done.
+'You need another event channel that holds spike times, and a marker channel that holds burst starts and burst ends. The script steps through the trigger channel and does
+'burststatistics (as in the script "burststat")in a time range around the trigger that you defined in the dialog. It will open 2 new text file windows, one that holds
+'cycle by cycle values and one that holds means and standard deviations for every step in the trigger loop.
+
+'Dirk Bucher, January 2005
+
+
+'---------------------------------------------------------------------------------
+if ViewKind() <> 0 then                'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+        halt                                                        'if not, script is stopped
+endif
+
+WindowVisible (3);                'sets the time view to the front
+var vh%;
+vh%:=FrontView ();
+'---------------------------------------------------------------------------------
+var ok%, cur1, cur2, wholefile%;        'sets variable expressions        
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right order...
+
+        DlgCreate ("ATTENTION!");                        
+        DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+        DlgLabel        (1, "Process whole file?",2,2);              '...choose if you want to analyse the whole file
+        ok%:=DlgShow (wholefile%);
+
+        if ok%=1 then            'sets analysis to whole file or...
+                cur1:= 0;                                                                                                                
+                cur2:=MaxTime ();
+        else
+          halt       				'stops the script
+        endif
+
+else
+        cur1 := Cursor(1);      'if present and in the right order, get cursor times        
+        cur2 := Cursor(2);
+endif
+
+'--------------------------------------------------------------------------
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$;		'gets the filename of the time view
+
+'--------------------------------------------------------------------------
+
+var spkch%,burstch%,triggerch%,dur, offset, ok2%;
+
+DlgCreate ("Select");                'creates a dialog to assign channels
+DlgChan (1,"spikechannel", 2);
+DlgChan (2,"burstchannel", 8);
+DlgChan (3,"triggerchannel: ", 2);
+DlgReal (4,"duration [s]: ", 0,1000);
+DlgReal (5,"offset [s]: ", 0,1000);
+dur:=20;
+offset:=0;
+
+DlgShow (spkch%,burstch%,triggerch%,dur, offset); 'shows dialog and returns assignments
+
+if triggerch%<1 or spkch%<1 or burstch%<1 then              'checks if event channel is present. If not, or if "Cancel" is clicked,...
+        halt   														   'script is stopped
+endif
+
+'---------------------------------------------------------------------------------
+var nTrigg%,trigger[1000],j%;
+nTrigg%:=ChanData(triggerch%, trigger [], cur1, cur2); 'put all trigger event times into an array and count the total number
+
+'---------------------------------------------------------------------------------
+'check if the first and last windows can be analyzed with the specified duration and offset
+if trigger[j%]-offset<0 or trigger[nTrigg%-1]-offset+dur>MaxTime() then
+Message("First or last time window is out of range");
+halt
+endif
+'---------------------------------------------------------------------------------
+var nburststart%, burststart [100], burstend[100], d%;
+var period, burstfreq, duration, dutycycle, nSpikes%, meanrate, endtime, relstart, relend, interburst;
+var spktime[10000];
+var meanPeriod, sdPeriod, meanDur, sdDur, nBursts%, n%, c%;
+var trigCount%[10000], burstCount%[10000],start[10000],per[10000];
+var per2[10000],bfreq[10000],bfreq2[10000],bDur[10000],bDur2[10000],duty[10000];
+var duty2[10000],interB[10000],interB2[10000],nSpk%[10000],nSpk2%[10000],freq[10000],freq2[10000];
+var matrix[10000][20], matrix2[10000][20];
+var permean, perSD, bfreqmean, bfreqSD, bdurmean, bdurSD, dutymean;
+var dutySD, interBmean, interBSD, nspkmean, nspkSD, freqmean, freqSD;
+
+n%:=-1; 'set total counter
+
+'---------------------------------------------------------------------------------
+for j% := 0 to nTrigg%-1 step 1 do 'loop through all trigger events
+	c%:=-1; 'reset burst counter within trigger loop
+	'---------------------------------------------------------------------------------
+	MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+	MarkMask(burstch%,0,-1,-1);        'set all codes off
+	MarkMask(burstch%,0,1,0);                'turn on code 0 = burst start only
+
+	nburststart%:=ChanData(burstch%, burststart [], trigger[j%]-offset, trigger[j%]-offset+dur); 'put all burst starts into an array
+
+	MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+	MarkMask(burstch%,0,-1,-1);        'set all codes off
+	MarkMask(burstch%,0,1,1);                'turn on code 1=end code only
+
+	ChanData(burstch%, burstend[], trigger[j%]-offset, trigger[j%]-offset+dur); 'put all burst ends into an array
+
+	MarkMask(burstch%,-1,1,-1);        'turn on both markers again
+	'---------------------------------------------------------------------------------
+
+	Frontview(vh%);                'sets the time view to the front
+
+			'---------------------------------------------------------------------------------
+
+        for d% := 0 to nburststart%-2 step 1 do 'loop through all bursts within trigger loop
+		  	n%:=n%+1; 'count total loops
+			c%:=c%+1; 'count bursts
+
+        period := burststart [d%+1]-burststart [d%];
+
+        if burstend [d%] > burststart [d%] then         'if analysis begins with a burststart
+
+                duration:=burstend [d%]-burststart [d%];
+                nSpikes%:=ChanData(spkch%,spktime[],burststart [d%],burstend [d%]);
+                endtime:= burstend [d%];
+                interburst:=burststart [d%+1]-burstend[d%];
+        else                                                    'if analysis begins with a burst end, find next burst end: (d%+1)
+
+                duration:=burstend [d%+1]-burststart [d%];
+                nSpikes%:=ChanData(spkch%,spktime[],burststart [d%],burstend [d%+1]);
+                endtime:= burstend [d%+1];
+                interburst:=burststart [d%+1]-burstend[d%+1];
+        endif
+
+        burstfreq:= 1/period;
+        dutycycle:=duration/period;
+        meanrate:=(nSpikes%-1)/duration;
+
+		  ArrAdd(trigCount%[n%:1],j%+1);   'put value into array for every burst
+		  ArrAdd(burstCount%[n%:1],d%+1);
+		  ArrAdd (start[n%:1],burststart[d%]);
+		  ArrAdd (per[n%:1],period);
+		  ArrAdd (per2[d%:1],period);					'put value into array for every burst in the trigger loop
+		  ArrAdd (bfreq[n%:1],burstfreq);
+		  ArrAdd (bfreq2[d%:1],burstfreq);
+		  ArrAdd (bdur[n%:1],duration);
+		  ArrAdd (bdur2[d%:1],duration);
+		  ArrAdd (duty[n%:1],dutycycle);
+		  ArrAdd (duty2[d%:1],dutycycle);
+		  ArrAdd (interB[n%:1],interburst);
+		  ArrAdd (interB2[d%:1],interburst);
+		  ArrAdd (nSpk%[n%:1],nSpikes%);
+		  ArrAdd (nSpk2%[d%:1],nSpikes%);
+		  ArrAdd (freq[n%:1],meanrate);
+		  ArrAdd (freq2[d%:1],meanrate);
+		  next
+	ArrAdd(matrix2[j%:1][0],j%+1);   
+	ArrAdd(matrix2[j%:1][1],trigger[j%]);
+	ArrAdd(matrix2[j%:1][2],nburststart%-1);
+
+	ArrSum(per2[:c%+1], permean, perSD); 'get mean and SD
+	ArrMul(per2[], 0);
+	ArrAdd(matrix2[j%:1][3],permean);'put values for "mean" into 2-dimensional array
+	ArrAdd(matrix2[j%:1][4],perSD);
+
+	ArrSum(bfreq2[:c%+1], bfreqmean, bfreqSD);
+	ArrMul(bfreq2[], 0);
+	ArrAdd(matrix2[j%:1][5],bfreqmean);
+	ArrAdd(matrix2[j%:1][6],bfreqSD);
+
+	ArrSum(bdur2[:c%+1], bdurmean, bdurSD);
+	ArrMul(bdur2[], 0);
+	ArrAdd(matrix2[j%:1][7],bdurmean);
+	ArrAdd(matrix2[j%:1][8],bdurSD);
+
+	ArrSum(duty2[:c%+1], dutymean, dutySD);
+	ArrMul(duty2[], 0);
+	ArrAdd(matrix2[j%:1][9],dutymean);
+	ArrAdd(matrix2[j%:1][10],dutySD);
+
+	ArrSum(interB2[:c%+1], interBmean, interBSD);
+	ArrMul(interB2[], 0);
+	ArrAdd(matrix2[j%:1][11],interBmean);
+	ArrAdd(matrix2[j%:1][12],interBSD);
+
+	ArrSum(nSpk2%[:c%+1], nSpkmean, nSpkSD);
+	ArrMul(nSpk2%[], 0);
+	ArrAdd(matrix2[j%:1][13],nSpkmean);
+	ArrAdd(matrix2[j%:1][14],nSpkSD);
+
+	ArrSum(freq2[:c%+1], freqmean, freqSD);
+	ArrMul(freq2[], 0);
+	ArrAdd(matrix2[j%:1][15],freqmean);
+	ArrAdd(matrix2[j%:1][16],freqSD);
+
+	ArrMul(burststart[], 0); 'empty array
+	ArrMul(burstend[], 0);  'empty array
+
+next                'goes to next step in the loop
+
+ArrAdd(matrix[][0],trigCount%[]);'put values for "all" into 2-dimensional array
+ArrAdd(matrix[][1],burstCount%[]);
+ArrAdd(matrix[][2],start[]);
+ArrAdd(matrix[][3],per[]);
+ArrAdd(matrix[][4],bfreq[]);
+ArrAdd(matrix[][5],bdur[]);
+ArrAdd(matrix[][6],duty[]);
+ArrAdd(matrix[][7],interB[]);
+ArrAdd(matrix[][8],nSpk%[]);
+ArrAdd(matrix[][9],freq[]);
+
+FileNew(1); 'new text file
+Print("trigger, trigger time, # of bursts, mean period, SD period, mean burst frequency, SD burst frequency, mean duration, SD duration,");
+Print("mean duty cycle, SD duty cycle, mean interburst interval, SD interburst interval, mean #spikes, SD #spikes, mean spike frequency, SD spike frequency\n");
+Print("%f\n",matrix2[:nTrigg%][:17]);
+WindowSize(50,50);
+Window(50,0);
+WindowVisible(1);
+Windowtitle$(fname$+"_means");
+
+FileNew(1);
+Print("trigger, burst#, burststart, period, burst frequency, duration, duty cycle, interburst interval, #spikes, spike frequency\n");
+Print("%f\n", matrix[:n%+1][:10]);
+WindowSize(50,50);
+	Window(50,50);
+WindowVisible(1);
+Windowtitle$(fname$+"_all");
+
+Frontview(vh%);
+WindowSize(50,100);
+Window(0,0);
+
+'---------------------------------------------------------------------------------
+
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

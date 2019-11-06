@@ -1,0 +1,66 @@
+' SpikeEx
+' Eliminates the time window before and after a detected peak (spike) by linking with a straight line
+' Input: channel number, time before and after a peak, decline (level) after peak
+'          in the program, cursor 1 and 2 mark the time window to be analyzed
+' Version 0.9 from 04/17/02
+' Bjoern
+
+var DataCh%, EvtCh%, ErgCh%, err%, err$;
+var vor, nach, berend, stop;     ' defines the size of the area to be deleted
+var von, mit, bis; ' start (von), peak (mit) and end (bis) of the area
+var yvon, ybis, yschritt;
+var Bereich[10000];
+var anzahl%, i%;
+var peaklev;
+
+' Initializing of other variables
+
+'****************************************************************
+  datach% := 1;  ' Waveform channel with intracellular trace
+  vor :=  0.005; ' time window to be deleted before ('vor')peak
+  nach := 0.005; ' time window to be deleted after ('nach') peak
+  peaklev := 1.25; ' decline after peak in mV (level of peak detect)
+'****************************************************************
+evtch%:=9;
+  mit := cursor(1); ' start searching for peaks
+  berend := cursor(2); ' end of search
+
+' creating a temporary event channel with peaks
+  evtch% := MemChan(2);
+  ChanShow(evtch%);
+  err% := MemImport(evtch%,datach%,mit,cursor(2),0,0.0001,peaklev);
+
+' define criterion for loop stop
+  stop := (lasttime(evtch%,berend))-nach;
+ 
+' Copying of data channel to event channel
+  ergch% := MemChan(1,0,BinSize(datach%)); ' new waveform channel for result
+  err$ := ChanUnits$(ergch%,"mV");
+  err% := ChanScale(ergch%,20);
+  ChanShow(ergch%);
+  err% := MemImport(ergch%,datach%,mit,berend);
+
+
+  repeat;
+    ' find peak 
+    mit := nexttime(evtch%,mit);
+  
+    ' read area
+    von := mit-vor;
+    bis := mit+nach;
+    yvon := ChanValue(datach%,von);
+    ybis := ChanValue(datach%,bis);
+    anzahl% := ChanData(datach%,bereich[],von,bis);
+    yschritt := ((ybis-yvon)/anzahl%);
+
+    ' linear substitution of area
+    for i%:=1 to anzahl% do
+      bereich[i%] := yvon+(i%*yschritt);
+    next;
+ 
+    ' write area in result channel
+    err% := MemSetItem(ergch%,0,von,bereich[:anzahl%]);
+  until mit >= stop;
+
+' deleting event channel
+  err% := ChanDelete(evtch%,0);

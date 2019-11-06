@@ -1,0 +1,296 @@
+
+'This is a customized version of "phaseburst", done for analysis of pyloric rhythms from extracellular recordings
+'(meaning that there is no meaningful PY spike# and PY frequency). You don't have to assign anything in dialogs anymore,
+'all you have to do is name the channels in the appropriate way. Here's what the channel names should be:
+
+'event channels:
+
+'"PDspikes"
+'"LPspikes"
+
+'marker channels:
+
+'"PDbursts"
+'"LPbursts"
+'"PYbursts"
+
+'Dirk Bucher, September 2003
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+'-------------------------------------------------------------------------------------------------
+
+'assigning the channels
+
+var spkch%, spkch2%,burstch%, refspkch%, refburstch%, burstch2%,counter[100000], list%[1000], a%, b%, d%, e%, f%, title$;
+
+ChanList (list%[], 10);
+
+a%:=0;
+repeat
+a%:=a%+1;
+title$:= ChanTitle$ (a%);
+until
+title$="PDspikes";
+
+refspkch%:=a%;
+
+b%:=0;
+repeat
+b%:=b%+1;
+title$:= ChanTitle$ (b%);
+until
+title$="LPspikes";
+
+spkch%:=b%;
+
+d%:=0;
+repeat
+d%:=d%+1;
+title$:= ChanTitle$ (d%);
+until
+title$="PDbursts";
+
+refburstch%:=d%;
+
+e%:=0;
+repeat
+e%:=e%+1;
+title$:= ChanTitle$ (e%);
+until
+title$="LPbursts";
+
+burstch%:=e%;
+
+f%:=0;
+repeat
+f%:=f%+1;
+title$:= ChanTitle$ (f%);
+until
+title$="PYbursts";
+
+burstch2%:=f%;
+
+'------------------------------------------------------------------------------------------------------------------------
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";
+
+'--------------------------------------------------------------------------------------------------------------------------
+
+'putting burst start and end times into separate arrays
+
+var refburststart[100000],burststart[100000],refburstend[100000], burstend[100000];		
+var nrefburststart%,nrefburstend%,nburststart%,nburstend%;
+var burststart2[100000],burstend2[100000],nburststart2%,nburstend2%;
+
+'for reference burstchannel:
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+MarkMask(refburstch%,0,-1,-1);		'set all codes off
+MarkMask(refburstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nrefburststart%:=ChanData(refburstch%,refburststart[],cur1,cur2);	'get levator burst start times
+
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+MarkMask(refburstch%,0,-1,-1);		'set all codes off
+MarkMask(refburstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nrefburstend%:=ChanData(refburstch%,refburstend[],refburststart[0],cur2);	'get levator burst end times
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+
+
+'for burstchannel:
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch%,0,-1,-1);		'set all codes off
+MarkMask(burstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nburststart%:=ChanData(burstch%,burststart[],cur1,cur2);	'get depressor burst start times
+
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch%,0,-1,-1);		'set all codes off
+MarkMask(burstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nburstend%:=ChanData(burstch%,burstend[],burststart[0],cur2);	'get depressor burst end times
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+
+
+'for burstchannel2:
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch2%,0,-1,-1);		'set all codes off
+MarkMask(burstch2%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nburststart2%:=ChanData(burstch2%,burststart2[],cur1,cur2);	'get depressor burst start times
+
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch2%,0,-1,-1);		'set all codes off
+MarkMask(burstch2%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nburstend2%:=ChanData(burstch2%,burstend2[],burststart2[0],cur2);	'get depressor burst end times
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+
+
+'----------------------------------------------------------------------------------------------------------------------------
+if nrefburststart%>0 then
+'Print headers and column titles for different cases:
+
+Printlog ("%s,%s%s,%s%s,%s%s,%s%s, ", "filename", "PD", " cycle#", "PD"," total#cycles", "PD"," burststart","PD"," burstend");
+Printlog ("%s%s,%s%s,%s,%s,%s%s,","PD"," relative burststart","PD"," relative burstend"," cycle period", "inst cycle freq", "PD"," duration");
+Printlog ("%s%s,%s%s%s,%s%s%s,", "PD"," dutycycle","#spikes in ","PD"," burst","spikefreq in ","PD"," burst");
+Printlog ("%s%s,%s%s,%s%s,","LP"," burststart","LP"," burstend","LP"," relative burststart");
+Printlog ("%s%s,%s%s,%s%s,%s%s%s%s,%s%s,%s%s,","LP"," relative burstend","LP"," on delay","LP"," off delay","PD", "-","LP"," gap","LP"," on phase", "LP"," off phase");
+Printlog ("%s%s,%s%s,%s%s%s,", "LP"," duration","LP", " dutycycle","#spikes in ","LP"," burst");
+Printlog ("%s%s%s,","spikefreq in ","LP"," burst");
+Printlog ("%s%s,%s%s,%s%s,%s%s,%s%s,%s%s,","PY"," burststart","PY"," burstend","PY"," relative burststart","PY"," relative burstend","PY"," on delay", "PY"," off delay");
+Printlog ("%s%s%s%s,%s%s%s%s,%s%s,%s%s,", "PD", "-","PY"," gap","LP", "-","PY"," gap","PY"," on phase", "PY"," off phase");
+Printlog ("%s%s,%s%s,%s%s%s,%s%s%s,", "PY"," duration","PY"," dutycycle","#spikes in ","PY"," burst","spikefreq in ","PY"," burst");
+Printlog ("%s%s%s%s,%s%s%s%s", "LP", "-","PY"," delay", "LP", "-","PY"," phasedelay\n");
+endif
+'------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+'returning the actual analysis values
+
+var refperiod,delay,nextdelay,phase,refdutycyc,refdur,dur,refrelstart, refrelend, relstart, relend, refmeanrate, meanrate, refnspks%, nspks%;
+var delay2,nextdelay2,phase2,dur2,relstart2, relend2, meanrate2, nspks2%, seconddelay, secondphase;
+var dummy[100000], dummy2[100000], dummy3[100000];
+var j%, k%, i%, m%;	'counter
+
+m%:=0;
+k%:=0;
+for j% := 0 to nrefburststart%-1 step 1 do		' loop through all complete cycles
+
+refperiod := refburststart[j%+1]-refburststart[j%];
+
+
+
+repeat
+delay:=burststart[k%]-refburststart[j%];
+k%:=k%+1;
+until delay>0 and delay<refperiod or k%>nburststart%-1;;	'search for next valid cycle
+
+
+repeat
+delay2:=burststart2[m%]-refburststart[j%];
+m%:=m%+1;
+until delay2>0 and delay2<refperiod or m%>nburststart2%-1;;	'search for next valid cycle
+
+
+
+
+phase:=delay/refperiod;
+nextdelay:=burststart[k%]-refburststart[j%];
+phase2:=delay2/refperiod;
+nextdelay2:=burststart2[m%]-refburststart[j%];
+
+
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+
+	refdutycyc:=(refburstend[j%]-refburststart[j%])/refperiod;
+	refdur:= refburstend[j%]-refburststart[j%];	
+	dur:=burstend[k%-1]-burststart[k%-1];
+	refrelstart:=refburststart [j%];
+	refrelend:=refburstend [j%];
+	relstart:=burststart [k%-1];
+	relend:=burstend [k%-1];
+
+	dur2:=burstend2[m%-1]-burststart2[m%-1];
+	relstart2:=burststart2 [m%-1];
+	relend2:=burstend2 [m%-1];
+	seconddelay:=burststart2 [m%-1]-burststart [k%-1];
+	secondphase:=seconddelay/refperiod;
+
+		refnspks%:=ChanData(refspkch%,dummy[],refburststart[j%],refburstend[j%]);
+		refmeanrate:=(refnspks%-1)/(refburstend[j%]-refburststart[j%]);
+		nspks%:=ChanData(spkch%,dummy2[],burststart[k%-1],burstend[k%-1]);
+		meanrate:=(nspks%-1)/(burstend[k%-1]-burststart[k%-1]);
+		nspks2%:=-1;
+		meanrate2:=-1;
+
+i%:=i%+1;
+
+
+		Printlog ("%s,%d,%d,%f,%f,%f,%f,%f,", fname$, j%+1, nrefburststart%-1,refburststart[j%], refburstend[j%], refrelstart, refrelend, refperiod);
+ 		PrintLog ("%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate, burststart [k%-1],burstend[k%-1],relstart, relend, delay, delay+dur, delay-refdur);
+ 		PrintLog ("%f,%f,%f,%f,%d,%f,", phase, phase+dur/refperiod, dur, dur/refperiod, nspks%, meanrate);
+		PrintLog ("%f,%f,%f,%f,%f,%f,%f,%f,",burststart2 [m%-1],burstend2[m%-1],relstart2, relend2, delay2, delay2+dur2, delay2-refdur, delay2-delay-dur);
+ 		PrintLog ("%f,%f,%f,%f,%d,%f,", phase2, phase2+dur2/refperiod, dur2, dur2/refperiod, nspks2%, meanrate2);
+		Printlog ("%f, %f\n", seconddelay, secondphase);
+
+endif
+
+
+	k%:=0;
+	m%:=0;
+
+
+next
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+
+if nrefburststart%>0 then
+var i,bursts,perc;
+i:=i%;
+bursts:=nrefburststart%-1;
+perc:=i/bursts*100;
+Message ("%d%s%d%s%2.1f%s",i%," of ",nrefburststart%-1," cycles (",perc,"%) were considered valid");
+'returns number of valid cycles & total number of cycles & percentage of valid cycles as a message
+else
+Message ("no bursts found");
+endif
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+
+
+

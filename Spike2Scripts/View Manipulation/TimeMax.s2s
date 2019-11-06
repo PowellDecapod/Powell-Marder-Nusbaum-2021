@@ -1,0 +1,16 @@
+'"Maximize x-axis"
+'Script for the script bar to show the entire x range
+
+'Dirk Bucher 2002
+
+
+if ViewKind() = 0
+or ViewKind() = 4
+then
+XRange(0,MaxTime());
+else
+Message("This isn't a time or result view!");
+endif
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+

@@ -1,0 +1,119 @@
+'Script to analyse data from paired pulse recovery cycle protocols. You need event channels that hold the stimulus and spike peak
+'times, and the waveform channel with the spike response. Returned are delay values for conditioning and test pulses, deltas and ratios
+'for delays, and the same for spike waveform measures (trough, peak, amplitude, duration).
+
+'Dirk Bucher 2010
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var nStim%, nSpike%, stimch%, spikech%, wavech%, stim[20000], spike[20000], ok1%, waveDup%, troughstart, troughend;
+
+DlgCreate("Select");
+DlgChan(1,"stim channel:", 2);
+DlgChan(2,"spike channel",2);
+DlgChan(3, "waveform channel",529);
+ok1%:=DlgShow(stimch%, spikech%, wavech%);
+if ok1%<>1 then
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+nStim%:=ChanData(stimch%, stim[], cur1, cur2);
+nSpike%:=ChanData(spikech%,spike[], cur1, cur2);
+
+troughstart:=-.003;
+troughend:=-.001;
+waveDup%:=ChanDuplicate(wavech%);
+ChanProcessAdd(waveDup%,1);
+ChanProcessArg(waveDup%,1,1,0.001);
+
+Printlog("stimTcond, stimTtest, interv[s], delCond[ms], delTest[ms], ratioDel, deltaDel[ms], CondTrough[mV], TestTrough[mV],ratioTrough, deltaTrough[mV], condPeak[mV], testPeak[mV], ratioPeak, deltaPeak[mV],");
+PrintLog("condAmp[mV], testAmp[mV], ratioAmp, deltaAmp[mV], CondDur[ms], TestDur[ms], ratioDur, deltaDur[ms]\n");
+
+var j%, stimTcond, stimTtest, interv, delCond, delTest, deltaDel, ratioDel, condPeak, testPeak, ratioPeak, deltaPeak;
+var CondTrough, CondTroughT, TestTrough, TestTroughT, ratioTrough, deltaTrough, condAmp, testAmp, ratioAmp, deltaAmp;
+var CondOnesixthlevel, TestOnesixthlevel, CondStartThreshT, CondEndThreshT, TestStartThreshT, TestEndThreshT;
+var CondDur, TestDur, ratioDur, deltaDur;
+
+for j%:=0 to nStim%-2 step 2 do
+    stimTcond:=stim[j%];
+    stimTtest:=stim[j%+1];
+    interv:=stimTtest-stimTcond;
+    delCond:=(spike[j%]-stimTcond)*1000;
+    delTest:=(spike[j%+1]-stimTtest)*1000;
+    ratioDel:=delTest/delCond;
+    deltaDel:=delTest-delCond;
+    CondTroughT:=ChanSearch(waveDup%,2,spike[j%]+troughstart, spike[j%]+troughend);
+    CondTrough:=ChanValue(waveDup%,CondTroughT);
+    TestTroughT:=ChanSearch(waveDup%,2,spike[j%+1]+troughstart, spike[j%+1]+troughend);
+    TestTrough:=ChanValue(waveDup%,TestTroughT);
+    ratioTrough:=TestTrough/CondTrough;
+    deltaTrough:=TestTrough-CondTrough;
+    condPeak:=ChanValue(wavech%,spike[j%]);
+    testPeak:=ChanValue(wavech%, spike[j%+1]);
+    ratioPeak:=testPeak/condPeak;
+    deltaPeak:=testPeak-condPeak;
+    condAmp:=condPeak-CondTrough;
+    testAmp:=testPeak-TestTrough;
+    ratioAmp:=testAmp/condAmp;
+    deltaAmp:=testAmp-condAmp;
+    CondOnesixthlevel:=CondTrough+condAmp/6;
+    TestOnesixthlevel:=TestTrough+testAmp/6;
+    CondStartThreshT:=ChanSearch(wavech%, 7, spike[j%]-0.003, spike[j%], CondOnesixthlevel);
+    CondEndThreshT:=ChanSearch(wavech%, 8, spike[j%], spike[j%]+0.013,CondOnesixthlevel);
+    CondDur:=(CondEndThreshT-CondStartThreshT)*1000;
+    TestStartThreshT:=ChanSearch(wavech%, 7, spike[j%+1]-0.003, spike[j%+1], TestOnesixthlevel);
+    TestEndThreshT:=ChanSearch(wavech%, 8, spike[j%+1], spike[j%+1]+0.013,TestOnesixthlevel);
+    TestDur:=(TestEndThreshT-TestStartThreshT)*1000;
+    ratioDur:=TestDur/CondDur;
+    deltaDur:=TestDur-CondDur;
+
+    Printlog("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,",stimTcond, stimTtest, interv, delCond, delTest, ratioDel, deltaDel, CondTrough, TestTrough, ratioTrough, deltaTrough, condPeak, testPeak, ratioPeak, deltaPeak);
+    PrintLog("%f,%f,%f,%f,%f,%f,%f,%f\n",condAmp,testAmp,ratioAmp,deltaAmp,CondDur, TestDur, ratioDur, deltaDur);
+next
+
+ChanDelete(waveDup%,1);
+Printlog ("\n"); 'add empty line                                                                                                                                   
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

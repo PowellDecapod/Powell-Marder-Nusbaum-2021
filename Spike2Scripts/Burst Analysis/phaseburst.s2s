@@ -1,0 +1,690 @@
+
+'Script for phase analysis of two or three bursting neurons or nerves
+'===========================================================
+
+'You need two (or three) marker channels holding burst starts (00) and ends (01), as created by "BurstMake()". One will be the reference channel
+'to set the cycle period, the other will be the burstchannel that is active with a phase lag that is to be determined (the optional third will be
+'analyzed in the same way). Spike analysis is optional, you can also analyse the corresponding event channels holding the spike times. Since there
+'is always one value less for the cycle period than for the number of bursts (fence post problem), the last burst is omitted. This should be kept
+'in mind, when consecutive datafiles from a single experiment are evaluated. Otherwise, only "valid" cycles are analysed.
+
+
+
+'Excluded cases are:
+
+' - no burst start within a cycle
+' - more than one burst start within a cycle
+
+'Start and end time of analysis is set with cursor 1 and cursor 2; if not present or not in the right order, you are asked if you want to do the analysis for the whole file.
+
+
+'The following values are returned and printed in table compatible format into the log window:
+
+
+' - cycle#										this numbers the bursts from 1 to n. can be corrected by adding or substracting after checking the box in the dialog. Maybe useful if
+													'your file is one of a series of files from the same experiment. again, keep in mind that the last burst of the last data file was
+													'omitted! you may want to add the number of the last burst in the last data file +1!
+
+' - total#cycles								
+								
+' - reference burststart					this gives the absolute start time of every reference burst, based on the time base of the data file.
+
+' - reference burstend						this gives the absolute end time of every reference burst, based on the time base of the data file.
+
+' - reference relative burststart		this, by default, substracts the time value of cursor 1 (if present) from the absolute time, so your analysis starts at 0.
+													'if you check the box in the dialog you can add or substract to match the time code of a preceeding or following data file from the
+													'same experiment.
+
+' - reference relative burstend			'see above.
+
+' - cycle period								'time from reference burst start to next reference burst start
+
+' - inst cycle freq							'1/cycle period
+
+' - reference duration						'time from reference burst start to reference burst end
+
+' - reference dutycycle						'reference duration/cycle period
+
+'Optional (when reference spikechannel were assigned in the dialog):
+	' - #spikes in reference burst		
+	' - spikefreq in reference burst
+
+' - burststart	neuron2						this gives the absolute start time of every burst, based on the time base of the data file.
+
+' - burstend neuron2							this gives the absolute end time of every burst, based on the time base of the data file.
+
+' - relative burststart	neuron2			see above
+
+' - relative burstend neuron2				see above
+
+' - on delay neuron2							time from reference burst start to burststart
+
+' - off delay neuron2						time from reference burst start to burstend
+
+' - neuron1-neuron2 gap						time from reference burst end to burststart
+
+' - on phase									on delay/cycle period
+
+' - off phase									off delay/cycle period
+
+' - duration									'time from burststart to burstend
+
+' - duty cycle									'duration/cycle period. needed to determine total duration in phase plots
+
+'Optional (when spikechannel were assigned in the dialog):
+	' - #spikes in burst
+	' - spikefreq in burst
+
+' -the same values for neuron3, plus the neuron2-neuron3 gap
+
+'SCHEMATIC
+
+'		neuron1						|||||||||									|||||||||
+'		neuron2			  								||||||
+'		neuron3 															|||||||
+
+'		cycle period			   ------------------------------------
+'		neuron1 duration			---------
+' 		neuron2 duration								------
+'		neuron3 duration												-------
+'		neuron2 on delay			---------------
+'		neuron2 off delay			---------------------
+'		neuron3 delay				---------------------------
+'		neuron1-neuron2 gap					------
+'		neuron1-neuron3 gap					------------------
+'		neuron2-neuron3 delay						------------
+'		neuron2-neuron3 gap									------
+
+
+
+'dirk bucher, january 2002.
+'bug fix 03/31/03
+'extended to 3 channels 04/12/03
+'bug fix 06/09/03	--> spkfreq in burst is now calculated as nspk-1/dur
+' extended 09/17/03 --> off delay and off phase added
+
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+'-------------------------------------------------------------------------------------------------
+
+'assigning the channels
+
+var spkch%, spkch2%,burstch%, refspkch%, refburstch%, burstch2%, reflabel$, label$, label2$, refspkan%, spkan%, spkan2%, corrT%, corrB%, Tadd, thirdcheck%;
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgText ("Burst channels:",-10,1);
+DlgChan (1,"Reference channel:", 8,0,2);
+DlgChan (2,"Channel 2:", 8,0,3);
+DlgText ("Channel labels:",-10,5);
+DlgString(3, "Reference label:", 20,"",0,6);		'creates a field to type in the name of the reference neuron that will appear in the column headers of the print output
+DlgString(4, "Channel 2 label:", 20, "",0,7);
+DlgText ("Optional:",-10,9);
+DlgCheck (5, "Add a 3rd channel", 8, 10);
+DlgText ("Include spike analysis for:",5,12);
+DlgCheck (6, "Reference channel", 8, 13); 'creates a checkbox for optional inclusion of reference spike channel
+DlgCheck (7, "Channel 2", 8, 14);
+DlgCheck (8, "Channel 3", 8, 15);'creates a checkbox for optional inclusion of spike channel
+DlgText ("Correction for sequential files:",5,17);
+DlgCheck (9, "Time", 8, 18);	'creates a checkbox for optional correction of relative time codes
+DlgCheck (10, "Burst#", 8, 19);		'creates a checkbox for optional correction of burst numbers
+DlgText ("",5,20);
+reflabel$:="neuron A";							'preset for reference label
+label$:="neuron B";								'preset for label
+											'defaults checkbox for reference spike channel as checked 										'defaults checkbox for spike channel as checked 
+ok%:= DlgShow (refburstch%, burstch%, reflabel$, label$, thirdcheck%, refspkan%, spkan%, spkan2%, corrT%, corrB%); 'shows dialog and returns assignments
+
+if burstch%+refburstch%=0 or ok%<1 or burstch%=refburstch% then		'checks if both burstchannels are assigned and different from each other.
+	Message ("Invalid channel assignment!");						'if not, message pops up and...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+
+if thirdcheck%<>1 then
+
+if spkan%+refspkan%=2 then				'identifies the case where both spikechannels can be assigned
+
+	DlgCreate ("Select");
+	DlgChan (1,"Reference spikechannel",2);
+	DlgChan (2,"Spikechannel",2);
+	ok%:=DlgShow (refspkch%, spkch%);
+
+	if spkch%<1 or refspkch%<1 then		'checks if event channels were assigned.
+		Message ("No spike analysis!");					
+	endif
+endif
+
+if spkan%=1 and refspkan%<>1 then
+
+	DlgCreate ("Select");
+	DlgChan (1,"Spikechannel",2);
+	ok%:=DlgShow (spkch%);
+
+	if spkch%<1 then						   'checks if event channel was assigned.
+		Message ("No spike analysis!");					
+	endif
+endif
+
+
+if spkan%<>1 and refspkan%=1 then
+
+	DlgCreate ("Select");
+	DlgChan (1,"Reference spikechannel",2);
+	ok%:=DlgShow (refspkch%);
+
+	if refspkch%<1 then						'checks if event channel was assigned.
+		Message ("No spike analysis!");				
+	endif
+endif
+
+else
+
+if refspkan% + spkan% + spkan2% = 3 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"", 0,3);
+DlgChan (3,"Reference spikechannel",2, 0, 5);
+DlgChan (4,"Spikechannel 2",2, 0, 6);
+DlgChan (5,"Spikechannel 3",2, 0, 7);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, refspkch%, spkch%, spkch2%);
+
+	if burstch2%<1 or refspkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it
+	endif
+endif
+
+if refspkan% + spkan% = 2 and spkan2%<>1 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Reference spikechannel",2, 0, 5);
+DlgChan (4,"Spikechannel 2",2, 0, 6);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, refspkch%, spkch%);
+
+	if burstch2%<1 or refspkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it
+	endif
+endif
+
+if refspkan% + spkan2% = 2 and spkan%<>1 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Reference spikechannel",2, 0, 5);
+DlgChan (4,"Spikechannel 3",2, 0, 6);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, refspkch%, spkch2%);
+
+	if burstch2%<1 or refspkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it	
+	endif
+endif
+
+if refspkan%=1 and spkan%+spkan2% = 0 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Reference spikechannel",2, 0, 5);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, refspkch%);
+
+	if burstch2%<1 or refspkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it		
+	endif
+endif
+
+if refspkan%=0 and spkan%+spkan2% = 2 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Spikechannel 2",2, 0, 5);
+DlgChan (4,"Spikechannel 3",2, 0, 6);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, spkch%, spkch2%);
+
+	if burstch2%<1 or spkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it		
+	endif
+endif
+
+if refspkan% + spkan2% = 0 and spkan%=1 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Spikechannel 2",2, 0, 5);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, spkch%);
+
+	if burstch2%<1 or spkch%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it
+	endif
+endif
+
+if refspkan% + spkan% = 0 and spkan2%=1 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+DlgChan (3,"Spikechannel 3",2, 0, 5);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$, spkch2%);
+
+	if burstch2%<1 or spkch2%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it
+	endif
+endif
+
+if refspkan% + spkan% + spkan2% = 0 then
+
+DlgCreate ("Select");
+DlgChan (1,"Burst channel 3:", 8);
+DlgString(2, "Channel 3 label:", 20,"",0,3);
+label2$:="neuron C";
+ok%:=DlgShow (burstch2%, label2$);
+
+	if burstch2%<1 or ok%=0 then						'checks if event channel was assigned.
+		Message ("script aborted");
+		FrontView (App (3));		'brings script to front...
+		FileClose (0);				'...and closes it	
+	endif
+endif
+
+
+endif
+
+'---------------------------------------------------------------------------------------------------------
+
+'relative time and burst# correction.
+
+var dummyT, dummyB%, burst%;
+
+if	corrT%+corrB%=0 then				'identifies the case where no optional box was checked.
+	Tadd:= -cur1;						'sets time correction to substracting cursor 1 value (if present and >0),so the relative times returned are zeroed to the analysis start 
+	burst%:= 0;							'no value is added to burst#
+	if cur1=0 then						
+		Message ("No relative time correction!");
+	else
+		Message ("Cursor (1) time substracted!");
+	endif
+else
+	if corrT%+corrB%=2 then			'if both boxes are checked
+ 		DlgCreate ("Relative time and burst# correction"); 'creates dialog to assign correction values
+		DlgReal (1, "Add time [s]:", -72000, 72000);
+		DlgInteger (2,"Add bursts: ", -10000, 10000 );
+		dummyT:=1200; 'presets time correction to 1000s
+		DlgShow (dummyT, dummyB%);
+		if dummyT=0 then	'if cancel is clicked or time correction=0
+			Tadd:= -cur1;		'sets time correction to substracting cursor 1 value
+			burst%:= dummyB%;	'sets burst correction to whatever was assigned (including 0 if cancel was clicked)
+			if cur1=0 then
+				Message ("No relative time correction!");
+			else
+				Message ("Cursor (1) time substracted!");
+			endif
+
+		else
+			Tadd:=dummyT;		'sets time correction to whatever was assigned 
+			burst%:= dummyB%;		'sets burst correction to whatever was assigned
+		endif
+	else
+		if corrT%=1 and corrB%=0 then		'if only time correction was checked
+			DlgCreate ("Relative time and burst# correction"); 'creates dialog for only time correction
+			DlgReal (1, "Add time [s]:", -72000, 72000);
+			dummyT:=1200; 'presets time correction to 1000s
+			DlgShow (dummyT);
+			if dummyT=0 then	'if time correction returned 0 (or was canceled)
+				Tadd:= -cur1;	'sets time correction to default
+				if cur1=0 then
+					Message ("No relative time correction!");
+				else
+					Message ("Cursor (1) time substracted!");
+				endif
+			else
+				Tadd:=dummyT; 'sets time correction to whatever was assigned
+			endif
+		else							'if only burst correction was checked
+			DlgCreate ("Relative burst correction"); 'creates dialog for only burst correction 
+			DlgInteger (1,"Add bursts: ", -10000, 10000);
+			DlgShow (dummyB%);
+			burst%:= dummyB%;		'sets burst correction to whatever was assigned
+		endif
+	endif
+endif
+'------------------------------------------------------------------------------------------------------------------------
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+'Print headers and column titles for different cases:
+
+Printlog ("%s,%s%s,%s%s,%s%s,%s%s, ", "filename", reflabel$, " cycle#", reflabel$," total#cycles", reflabel$," burststart",reflabel$," burstend");
+Printlog ("%s%s,%s%s,%s,%s,%s%s,",reflabel$," relative burststart",reflabel$," relative burstend"," cycle period", "inst cycle freq", reflabel$," duration");
+Printlog ("%s%s,%s%s%s,%s%s%s,", reflabel$," dutycycle","#spikes in ",reflabel$," burst","spikefreq in ",reflabel$," burst");
+Printlog ("%s%s,%s%s,%s%s,",label$," burststart",label$," burstend",label$," relative burststart");
+Printlog ("%s%s,%s%s,%s%s,%s%s%s%s,%s%s,%s%s,",label$," relative burstend",label$," on delay",label$," off delay",reflabel$, "-",label$," gap",label$," on phase", label$," off phase");
+Printlog ("%s%s,%s%s,%s%s%s,", label$," duration",label$, " dutycycle","#spikes in ",label$," burst");
+Printlog ("%s%s%s,","spikefreq in ",label$," burst");
+Printlog ("%s%s,%s%s,%s%s,%s%s,%s%s,%s%s,",label2$," burststart",label2$," burstend",label2$," relative burststart",label2$," relative burstend",label2$," on delay", label2$," off delay");
+Printlog ("%s%s%s%s,%s%s%s%s,%s%s,%s%s,", reflabel$, "-",label2$," gap",label$, "-",label2$," gap",label2$," on phase", label2$," off phase");
+Printlog ("%s%s,%s%s,%s%s%s,%s%s%s,", label2$," duration",label2$," dutycycle","#spikes in ",label2$," burst","spikefreq in ",label2$," burst");
+Printlog ("%s%s%s%s,%s%s%s%s", label$, "-",label2$," delay", label$, "-",label2$," phasedelay\n");
+
+
+'--------------------------------------------------------------------------------------------------------------------------
+
+'putting burst start and end times into separate arrays
+
+var refburststart[100000],burststart[100000],refburstend[100000], burstend[100000];		
+var nrefburststart%,nrefburstend%,nburststart%,nburstend%;
+var burststart2[100000],burstend2[100000],nburststart2%,nburstend2%;
+
+'for reference burstchannel:
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+MarkMask(refburstch%,0,-1,-1);		'set all codes off
+MarkMask(refburstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nrefburststart%:=ChanData(refburstch%,refburststart[],cur1,cur2);	'get levator burst start times
+
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+MarkMask(refburstch%,0,-1,-1);		'set all codes off
+MarkMask(refburstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nrefburstend%:=ChanData(refburstch%,refburstend[],refburststart[0],cur2);	'get levator burst end times
+MarkMask(refburstch%,-1,1,-1);  'reset = include all codes
+
+
+'for burstchannel:
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch%,0,-1,-1);		'set all codes off
+MarkMask(burstch%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nburststart%:=ChanData(burstch%,burststart[],cur1,cur2);	'get depressor burst start times
+
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch%,0,-1,-1);		'set all codes off
+MarkMask(burstch%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nburstend%:=ChanData(burstch%,burstend[],burststart[0],cur2);	'get depressor burst end times
+MarkMask(burstch%,-1,1,-1);  'reset = include all codes
+
+if thirdcheck% =1 then
+
+'for burstchannel:
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch2%,0,-1,-1);		'set all codes off
+MarkMask(burstch2%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nburststart2%:=ChanData(burstch2%,burststart2[],cur1,cur2);	'get depressor burst start times
+
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+MarkMask(burstch2%,0,-1,-1);		'set all codes off
+MarkMask(burstch2%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nburstend2%:=ChanData(burstch2%,burstend2[],burststart2[0],cur2);	'get depressor burst end times
+MarkMask(burstch2%,-1,1,-1);  'reset = include all codes
+
+endif
+'----------------------------------------------------------------------------------------------------------------------------
+
+'returning the actual analysis values
+
+var refperiod,delay,nextdelay,phase,refdutycyc,refdur,dur,refrelstart, refrelend, relstart, relend, refmeanrate, meanrate, refnspks%, nspks%;
+var delay2,nextdelay2,phase2,dur2,relstart2, relend2, meanrate2, nspks2%, seconddelay, secondphase;
+var dummy[100000], dummy2[100000], dummy3[100000];
+var j%, k%, i%, m%;	'counter
+
+m%:=0;
+k%:=0;
+for j% := 0 to nrefburststart%-1 step 1 do		' loop through all complete cycles
+
+refperiod := refburststart[j%+1]-refburststart[j%];
+
+
+
+repeat
+delay:=burststart[k%]-refburststart[j%];
+k%:=k%+1;
+until delay>0 and delay<refperiod or k%>nburststart%-1;;	'search for next valid cycle
+
+if thirdcheck%= 1 then
+
+repeat
+delay2:=burststart2[m%]-refburststart[j%];
+m%:=m%+1;
+until delay2>0 and delay2<refperiod or m%>nburststart2%-1;;	'search for next valid cycle
+
+endif
+
+if thirdcheck%=1 then
+
+phase:=delay/refperiod;
+nextdelay:=burststart[k%]-refburststart[j%];
+phase2:=delay2/refperiod;
+nextdelay2:=burststart2[m%]-refburststart[j%];
+
+else
+
+phase:=delay/refperiod;
+nextdelay:=burststart[k%]-refburststart[j%];
+
+endif
+
+if thirdcheck%=1 then
+
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+
+	refdutycyc:=(refburstend[j%]-refburststart[j%])/refperiod;
+	refdur:= refburstend[j%]-refburststart[j%];	
+	dur:=burstend[k%-1]-burststart[k%-1];
+	refrelstart:=refburststart [j%]+Tadd;
+	refrelend:=refburstend [j%]+Tadd;
+	relstart:=burststart [k%-1]+Tadd;
+	relend:=burstend [k%-1]+Tadd;
+
+	dur2:=burstend2[m%-1]-burststart2[m%-1];
+	relstart2:=burststart2 [m%-1]+Tadd;
+	relend2:=burstend2 [m%-1]+Tadd;
+	seconddelay:=burststart2 [m%-1]-burststart [k%-1];
+	secondphase:=seconddelay/refperiod;
+endif
+else
+
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod then
+
+	refdutycyc:=(refburstend[j%]-refburststart[j%])/refperiod;
+	refdur:= refburstend[j%]-refburststart[j%];	
+	dur:=burstend[k%-1]-burststart[k%-1];
+	refrelstart:=refburststart [j%]+Tadd;
+	refrelend:=refburstend [j%]+Tadd;
+	relstart:=burststart [k%-1]+Tadd;
+	relend:=burstend [k%-1]+Tadd;
+
+endif
+endif
+
+
+'returning spike numbers and frequencies, if event channels were assigned
+
+if thirdcheck%<>1 then
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod then
+
+	if refspkch%>0 then			'if a reference spike channel is present
+		refnspks%:=ChanData(refspkch%,dummy[],refburststart[j%],refburstend[j%]);
+		refmeanrate:=(refnspks%-1)/(refburstend[j%]-refburststart[j%]);
+	else
+		refnspks%:=-1;
+		refmeanrate:=-1;
+	endif
+
+	if spkch%>0 then				'if a spikechannel is present
+		nspks%:=ChanData(spkch%,dummy2[],burststart[k%-1],burstend[k%-1]);
+		meanrate:=(nspks%-1)/(burstend[k%-1]-burststart[k%-1]);
+	else
+		nspks%:=-1;
+		meanrate:=-1;
+	endif
+endif
+endif
+
+if thirdcheck%=1 then
+
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+	
+	if refspkch%>0 then			'if a reference spike channel is present
+		refnspks%:=ChanData(refspkch%,dummy[],refburststart[j%],refburstend[j%]);
+		refmeanrate:=(refnspks%-1)/(refburstend[j%]-refburststart[j%]);
+	else
+		refnspks%:=-1;
+		refmeanrate:=-1;
+	endif
+
+	if spkch%>0 then				'if a spikechannel is present
+		nspks%:=ChanData(spkch%,dummy2[],burststart[k%-1],burstend[k%-1]);
+		meanrate:=(nspks%-1)/(burstend[k%-1]-burststart[k%-1]);
+	else
+		nspks%:=-1;
+		meanrate:=-1;
+	endif
+	if spkch2%>0 then				'if a spikechannel is present
+		nspks2%:=ChanData(spkch2%,dummy3[],burststart2[m%-1],burstend2[m%-1]);
+		meanrate2:=(nspks2%-1)/(burstend2[m%-1]-burststart2[m%-1]);
+	else
+		nspks2%:=-1;
+		meanrate2:=-1;
+	endif
+endif
+endif
+
+'counting the valid cycles
+if thirdcheck%=1 and phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+i%:=i%+1;
+endif
+if thirdcheck%<>1 and phase < 1.0 and phase > 0.0 and nextdelay > refperiod then
+i%:=i%+1;
+endif
+
+'--------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+'printing into the log window for the different cases:
+
+if thirdcheck%=1 then
+
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod and phase2 < 1.0 and phase2 > 0.0 and nextdelay2 > refperiod then
+
+
+		Printlog ("%s,%d,%d,%f,%f,%f,%f,%f,", fname$, j%+1+burst%, nrefburststart%-1,refburststart[j%], refburstend[j%], refrelstart, refrelend, refperiod);
+ 		PrintLog ("%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate, burststart [k%-1],burstend[k%-1],relstart, relend, delay, delay+dur, delay-refdur);
+ 		PrintLog ("%f,%f,%f,%f,%d,%f,", phase, phase+dur/refperiod, dur, dur/refperiod, nspks%, meanrate);
+		PrintLog ("%f,%f,%f,%f,%f,%f,%f,%f,",burststart2 [m%-1],burstend2[m%-1],relstart2, relend2, delay2, delay2+dur2, delay2-refdur, delay2-delay-dur);
+ 		PrintLog ("%f,%f,%f,%f,%d,%f,", phase2, phase2+dur2/refperiod, dur2, dur2/refperiod, nspks2%, meanrate2);
+		Printlog ("%f, %f\n", seconddelay, secondphase);
+endif
+else
+if phase < 1.0 and phase > 0.0 and nextdelay > refperiod then
+
+		Printlog ("%s,%d,%d,%f,%f,%f,%f,%f,", fname$, j%+1+burst%, nrefburststart%-1,refburststart[j%], refburstend[j%], refrelstart, refrelend, refperiod);
+ 		PrintLog ("%f,%f,%f,%d,%f,%f,%f,%f,%f,%f,%f,%f,",1/refperiod, refdur, refdutycyc, refnspks%, refmeanrate, burststart [k%-1],burstend[k%-1],relstart, relend, delay, delay+dur, delay-refdur);
+ 		PrintLog ("%f,%f,%f,%f,%d,%f\n", phase, phase+dur/refperiod, dur, dur/refperiod, nspks%, meanrate);
+endif
+endif
+
+
+	k%:=0;
+	m%:=0;
+
+
+next
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+Printlog ("\n"); 'add empty line
+
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+
+var i,bursts,perc;
+i:=i%;
+bursts:=nrefburststart%-1;
+perc:=i/bursts*100;
+Message ("%d%s%d%s%2.1f%s",i%," of ",nrefburststart%-1," cycles (",perc,"%) were considered valid");
+'returns number of valid cycles & total number of cycles & percentage of valid cycles as a message
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+
+
+

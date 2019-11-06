@@ -1,0 +1,91 @@
+'Script to do fast burst analysis for one channel in a sequence of files. This only returns
+'the means and SDs for burst duration and cycle periods, not single values for every burst. But hey, it's fast...
+
+'Dirk Bucher, March 2002
+'upgrade September 2002
+'upgrade to spike5 08/24/03 (default buffer channel numbers changed)
+'------------------------------------------------------------------------------------------------
+var prep$, list%[10], nChan%,i%, j%, k%, title$, ChNumber%, name$, chName$, ok%, ok1%, Fnames$[1000], nFiles, smr$;
+var mode%, int, level;
+var int2,int3,minim;
+var meanI, sdI, meanD, sdD, nBursts%;
+var evtcount%;
+ok%:= FilePathSet("");
+if ok%<0 then
+halt
+endif
+
+mode%:=0|1|2|3; 'list for mode assignment	
+
+DlgCreate ("Specify");
+DlgString (1, "Prep label:", 20);
+DlgString (2, "Search for channel name:", 20);
+DlgText ("FIND SPIKES:", 1,4);
+DlgList (3,"Mode","Peaks|Troughs|Data rising through level|Data falling through level", 4,0,5);
+DlgReal (4, "Minimum interval [s]", 0,100, 0, 6);
+DlgReal (5, "Level [mV]", -100,100, 0,7);
+DlgText ("FIND BURSTS:", 1, 9);
+DlgReal (6, "Maximum spike interval", 0,100, 0,10);
+DlgReal (7, "Maximum spike interval for first 2 events", 0,100, 0,11);
+DlgReal (8, "Minimum number of events", 2,100, 0,12);
+DlgText ("", 1, 13);
+	mode%:=2;
+	int:=0.001;
+	int2:=0.1;					'presets for dialog
+	int3:=0.1;
+	minim:=2;
+
+
+ok1%:= DlgShow (prep$, chName$, mode%, int, level, int2,int3,minim);
+
+if ok1%<>1 then
+halt
+endif
+
+
+PrintLog("Experiment, Filename, nCycles, mean cycle period [s], SD cycle period, mean burst duration [s],SD burst duration\n");
+
+'prints column titles to log window
+
+
+nFiles:= FileList (Fnames$[], 0);
+
+for j%:=0 to nFiles-1 step 1 do
+'-------------------------------------------
+'searching for the channel number of the specified channel name
+name$:=Fnames$[j%];
+FileOpen (name$,0,2);
+
+nChan%:= ChanList (list%[], 1);
+
+i%:=0;
+repeat
+i%:=i%+1;
+title$:= ChanTitle$ (i%);
+until
+title$=chName$;
+
+
+'-------------------------------------------
+
+var mem1%, mem2%;
+
+mem1%:=MemChan(2);					'creates a new buffer channel, event type
+MemImport(mem1%, i%, 0, MaxTime () ,mode% , int, level);	'imports the events to the buffer channel, as specified in the dialog
+mem2%:=MemChan(); 'new buffer channel is created
+BurstMake(mem2%,mem1%,0,MaxTime (),int2, int3, minim);
+nBursts%:= BurstStats(mem2%, 0, MaxTime(),meanI, sdI, meanD, sdD);
+evtcount%:= Count(mem2%, 0, MaxTime ());
+
+
+Printlog ("%s, %s, %d, %f, %f, %f, %f\n", prep$, Fnames$[j%], (evtcount%/2)-1, meanI, sdI, meanD, sdD);
+
+
+FileClose (-1,-1);
+
+next
+
+
+
+Frontview (LogHandle ()); 'bring log window to the front
+

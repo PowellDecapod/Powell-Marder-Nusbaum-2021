@@ -1,0 +1,403 @@
+'Analyzes delays and spike waveforms from burst stimulations of axons. It returns values in two text files, one spike by spike, and the
+'other means and errors and other stats for each individual burst. You need event channels that hold the stim times and
+'spike response peak times. If there are failures or ectopic spikes (i.e. the numbers of stims and responses don't match), you need
+'edited event channels with matching numbers in addition. The dialog will ask you for both the originals and the edited versions
+'and keeps track of number of ectopic spikes and spike failures. You also need a marker channel that holds the starts and ends of
+'the stimulus trains. You also need the original waveform channel. If there are substantial stimulus artifacts in it, this will mess
+'with finding correct trough voltages between spikes. You will therefore also be asked to assign a filtered waveform channel
+'(duplicate it and use the smoothing filter).
+
+'Dirk Bucher 2012
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var vh%;
+vh%:=View(); 'gets the view handle of the time view
+
+var stimch%, stimEditCh%, spkch%, spkEditCh%, trainch%, wavech%, troughch%, troughstart, troughend, treat$;
+
+DlgCreate("Select");
+DlgChan(1,"stim channel:", 2);
+DlgChan(2,"edited stim channel:",2);
+DlgChan(3,"spike channel:",2);
+DlgChan(4,"edited spike channel:",2);
+DlgChan(5, "stim train marker channel: ",8);
+DlgChan(6,"waveform channel",529);
+DlgChan(7,"filtered trough channel",529);
+DlgReal(8,"troughsearch start from spike [ms]", -1000,1000);
+DlgString(9,"treatment:",20);
+troughstart:=-3;
+ok%:=DlgShow(stimch%, stimEditCh%, spkch%, spkEditCh%, trainch%, wavech%, troughch%, troughstart,treat$);
+if ok%<>1 then
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+troughstart:=troughstart/1000;
+
+var err,nStimEdit%,nSpkEdit%, stimEdit[100000], spkEdit[100000];
+nStimEdit%:=ChanData(stimEditCh%, stimEdit[],cur1,cur2);
+nSpkEdit%:=ChanData(spkEditCh%, spkEdit[],cur1,cur2);
+
+if nStimEdit%>nSpkEdit% then
+    err:=nStimEdit%-nSpkEdit%;
+    Message("there are ",err," more stimulus events than spikes!");
+    FrontView(App(3));
+    FileClose(0);
+endif
+if nStimEdit%<nSpkEdit% then
+    err:=nSpkEdit%-nStimEdit%;    
+    Message("there are ",err," more spikes than stimulus events!");
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+var TVtitle$,spkTitle$,burstTitle$, spkVH%, burstVH%;
+TVtitle$:=WindowTitle$();
+TrimRight(TVtitle$,".smr");
+spkTitle$:=TVtitle$+"_"+treat$+"_delay_spikes";
+burstTitle$:=TVtitle$+"_"+treat$+"_delay_bursts";
+spkVH%:=FileNew(1);
+burstVH%:=FileNew(1);
+
+FrontView(vh%);
+
+var nTrainstart%, trainstart[3000];
+MarkMask(trainch%,-1,1,-1); 'reset = include all codes
+MarkMask(trainch%,0,-1,-1);	'set all codes off
+MarkMask(trainch%,0,1,0);		'turn on code 0 = burst start only
+
+nTrainstart%:=ChanData(trainch%, trainstart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(trainch%,-1,1,-1);	'turn on both markers again
+
+var b%, cycleEnd, trainTcorr,TrainMinute, nStim%,nSpk%,stim[500],spk[500];
+var fail%,ectopic%, spkMAT[100000][20],burstMAT[3000][48], count%;
+count%:=0;
+var s%,minute,bin,stimTcorr,spkT,spkTCorr,normT,interval, stimnum%, spknum%;
+var stimcount[100], spkcount[100], laststim, lastspk, stimInt, spkInt, stimFreq, spkFreq;
+var delay, peak, trough, amp, dur,onesixthlevel, troughT, startThreshT, endThreshT;
+var mDelay, mDelay2, mPeak, mTrough, mAmp, mDur,SDdelay, SDdelay2,SDpeak, SDtrough;
+var SDamp, SDdur, CVdelay, CVdelay2,CVpeak, CVtrough, CVamp, CVdur,minDelay, minDelay2;
+var minPeak, minTrough, minDur, minAmp, maxDelay, maxDelay2, maxPeak, maxTrough, maxAmp;
+var maxDur, deltaDelay, deltaDelay2, deltaPeak, deltaTrough, deltaAmp, deltaDur, percDelay;
+var percDelay2, percPeak, percTrough, percAmp, percDur, vector[1000], arrstart%;
+var maxDelayInd%,maxDelay2Ind%, maxPeakInd%,maxTroughInd%,maxAmpInd%,maxDurInd%;
+var minDelayInd%, minDelay2Ind%, minPeakInd%, minTroughInd%,minAmpInd%,minDurInd%;
+
+for b% := 0 to nTrainstart%-1 step 1 do
+    
+    if b%=nTrainstart%-1 then
+        cycleEnd:=cur2-.0001;
+    else
+        cycleEnd:=trainstart[b%+1]-.0001;
+    endif
+    trainTcorr:=trainstart[b%]-trainstart[0];
+    TrainMinute:=Round((trainTcorr/60)+0.5);
+    ArrMul(stim[],0);
+    ArrMul(stimEdit[],0);
+    ArrMul(spk[],0);
+    ArrMul(spkEdit[],0);
+    nStim%:=ChanData(stimch%, stim[],trainstart[b%]-.0001,cycleEnd-.0001);
+    nStimEdit%:=ChanData(stimEditCh%,stimEdit[],trainstart[b%]-.0001,cycleEnd);
+    nSpk%:=ChanData(spkch%,spk[],trainstart[b%]-.0001,cycleEnd);
+    nSpkEdit%:=ChanData(spkEditCh%,spkEdit[],trainstart[b%]-.0001,cycleEnd);
+    fail%:=nStim%-nStimEdit%;
+    ectopic%:=nSpk%-nStimEdit%;
+    if ectopic%<=0 then
+        ectopic%:=0;
+    endif
+    
+    if nStimEdit%>0 then
+    
+    for s%:=0 to nStimEdit%-1 step 1 do
+        
+        stimTcorr:=stimEdit[s%]-trainstart[0];
+        spkTcorr:=spkEdit[s%]-trainstart[0];
+        normT:=stimEdit[s%]-stimEdit[0];
+        minute:=Round((stimTcorr/60)+0.5);
+        bin:=Round((stimTcorr/20)+0.5);
+        stimnum%:=ChanData(stimch%,stimcount[],trainstart[b%]-.0001, stimEdit[s%]+.0001);
+        spknum%:=ChanData(spkch%,spkcount[],trainstart[b%]-.0001,spkEdit[s%]+.0001);
+        laststim:=LastTime(stimch%,stimEdit[s%]);
+        if laststim<0 then
+            stimInt:=0;
+            stimFreq:=0;
+        else
+            stimInt:=stimEdit[s%]-laststim;
+            stimFreq:=1/stimInt;
+        endif
+        lastspk:=LastTime(spkch%,spkEdit[s%]);
+        if lastspk<0 then
+            spkInt:=0;
+            spkFreq:=0;
+        else
+            spkInt:=spkEdit[s%]-lastspk;
+            spkFreq:=1/spkInt;
+        endif
+        if s%=0 then
+            arrstart%:=count%;
+        endif
+        delay:=(spkEdit[s%]-stimEdit[s%])*1000;
+        peak:=ChanValue(wavech%,spkEdit[s%]);
+        troughT:=ChanSearch(troughch%,2,spkEdit[s%]+troughstart,spkEdit[s%]);
+        trough:=Chanvalue(wavech%,troughT);
+        amp:=peak-trough;
+        onesixthlevel:=trough+amp/6;
+        startThreshT:=ChanSearch(wavech%, 7, spkEdit[s%]-0.003, spkEdit[s%], onesixthlevel);
+        endThreshT:=ChanSearch(wavech%, 8, spkEdit[s%], spkEdit[s%]+0.013,onesixthlevel);
+        dur:=(endThreshT-startThreshT)*1000;
+        spkMAT[count%][0]:=minute;
+        spkMAT[count%][1]:=bin;
+        spkMAT[count%][2]:=b%+1;
+        spkMAT[count%][3]:=stimnum%;
+        spkMAT[count%][4]:=spknum%;
+        spkMAT[count%][5]:=stimEdit[s%];
+        spkMAT[count%][6]:=spkEdit[s%];
+        spkMAT[count%][7]:=stimTcorr;
+        spkMAT[count%][8]:=spkTCorr;
+        spkMAT[count%][9]:=normT;
+        spkMAT[count%][10]:=stimInt;
+        spkMAT[count%][11]:=stimFreq;
+        spkMAT[count%][12]:=spkInt;
+        spkMAT[count%][13]:=spkFreq;
+        spkMAT[count%][14]:=delay;
+        spkMAT[count%][15]:=peak;
+        spkMAT[count%][16]:=trough;
+        spkMAT[count%][17]:=amp;
+        spkMAT[count%][18]:=onesixthlevel;
+        spkMAT[count%][19]:=dur;
+
+        count%:=count%+1;
+     
+    next
+    
+    ArrConst(vector[0:nStimEdit%],spkMAT[arrstart%:nStimEdit%][14]);
+    ArrSum(vector[0:nStimEdit%],mDelay,SDdelay);
+    CVdelay:=SDdelay/mDelay;
+    maxDelayInd%:=Max(vector[0:nStimEdit%]);
+    minDelayInd%:=Min(vector[0:nStimEdit%]);
+    maxDelay:=vector[maxDelayInd%];
+    minDelay:=vector[minDelayInd%];
+    deltaDelay:=maxDelay-minDelay;
+    percDelay:=((maxDelay/minDelay)-1)*100;
+    
+    ArrConst(vector[0:nStimEdit%-1],spkMAT[arrstart%+1:nStimEdit%-1][14]);
+    ArrSum(vector[0:nStimEdit%-1],mDelay2,SDdelay2);
+    CVdelay2:=SDdelay2/mDelay2;
+    maxDelay2Ind%:=Max(vector[0:nStimEdit%]);
+    minDelay2Ind%:=Min(vector[0:nStimEdit%]);
+    maxDelay2:=vector[maxDelay2Ind%];
+    minDelay2:=vector[minDelay2Ind%];
+    deltaDelay2:=maxDelay2-minDelay2;
+    percDelay2:=((maxDelay2/minDelay2)-1)*100;
+
+    ArrConst(vector[0:nStimEdit%],spkMAT[arrstart%:nStimEdit%][15]);
+    ArrSum(vector[0:nStimEdit%],mPeak,SDpeak);
+    CVpeak:=SDpeak/mPeak;
+    maxPeakInd%:=Max(vector[0:nStimEdit%]);
+    minPeakInd%:=Min(vector[0:nStimEdit%]);
+    maxPeak:=vector[maxPeakInd%];
+    minPeak:=vector[minPeakInd%];
+    deltaPeak:=maxPeak-minPeak;
+    percPeak:=((maxPeak/minPeak)-1)*100;
+    
+    ArrConst(vector[0:nStimEdit%],spkMAT[arrstart%:nStimEdit%][16]);
+    ArrSum(vector[0:nStimEdit%],mTrough,SDtrough);
+    CVtrough:=SDtrough/mTrough;
+    maxTroughInd%:=Max(vector[0:nStimEdit%]);
+    minTroughInd%:=Min(vector[0:nStimEdit%]);
+    maxTrough:=vector[maxTroughInd%];
+    minTrough:=vector[minTroughInd%];
+    deltaTrough:=maxTrough-minTrough;
+    percTrough:=((minTrough/maxTrough)-1)*100;
+    
+    ArrConst(vector[0:nStimEdit%],spkMAT[arrstart%:nStimEdit%][17]);
+    ArrSum(vector[0:nStimEdit%],mAmp,SDamp);
+    CVamp:=SDamp/mAmp;
+    maxAmpInd%:=Max(vector[0:nStimEdit%]);
+    minAmpInd%:=Min(vector[0:nStimEdit%]);
+    maxAmp:=vector[maxAmpInd%];
+    minAmp:=vector[minAmpInd%];
+    deltaAmp:=maxAmp-minAmp;
+    percAmp:=((maxAmp/minAmp)-1)*100;
+    
+    ArrConst(vector[0:nStimEdit%],spkMAT[arrstart%:nStimEdit%][19]);
+    ArrSum(vector[0:nStimEdit%],mDur,SDdur);
+    CVdur:=SDdur/mDur;
+    maxDurInd%:=Max(vector[0:nStimEdit%]);
+    minDurInd%:=Min(vector[0:nStimEdit%]);
+    maxDur:=vector[maxDurInd%];
+    minDur:=vector[minDurInd%];
+    deltaDur:=maxDur-minDur;
+    percDur:=((maxDur/minDur)-1)*100;    
+    
+
+    ArrAdd(burstMAT[b%:1][0:1],trainstart[b%]);
+    ArrAdd(burstMAT[b%:1][1:1],trainTcorr);
+    ArrAdd(burstMAT[b%:1][2:1],TrainMinute);
+    ArrAdd(burstMAT[b%:1][3:1], b%+1);
+    ArrAdd(burstMAT[b%:1][4:1],ectopic%);
+    ArrAdd(burstMAT[b%:1][5:1], fail%);
+    ArrAdd(burstMAT[b%:1][6:1],mDelay);
+    ArrAdd(burstMAT[b%:1][7:1],SDdelay);
+    ArrAdd(burstMAT[b%:1][8:1],CVdelay);
+    ArrAdd(burstMAT[b%:1][9:1],minDelay);
+    ArrAdd(burstMAT[b%:1][10:1],maxDelay);
+    ArrAdd(burstMAT[b%:1][11:1],deltaDelay);
+    ArrAdd(burstMAT[b%:1][12:1],percDelay);
+    ArrAdd(burstMAT[b%:1][13:1],mDelay2);
+    ArrAdd(burstMAT[b%:1][14:1],SDdelay2);
+    ArrAdd(burstMAT[b%:1][15:1],CVdelay2);
+    ArrAdd(burstMAT[b%:1][16:1],minDelay2);
+    ArrAdd(burstMAT[b%:1][17:1],maxDelay2);
+    ArrAdd(burstMAT[b%:1][18:1],deltaDelay2);
+    ArrAdd(burstMAT[b%:1][19:1],percDelay2);
+    ArrAdd(burstMAT[b%:1][20:1],mPeak);
+    ArrAdd(burstMAT[b%:1][21:1],SDpeak);
+    ArrAdd(burstMAT[b%:1][22:1],CVpeak);
+    ArrAdd(burstMAT[b%:1][23:1],minPeak);
+    ArrAdd(burstMAT[b%:1][24:1],maxPeak);
+    ArrAdd(burstMAT[b%:1][25:1],deltaPeak);
+    ArrAdd(burstMAT[b%:1][26:1],percPeak);
+    ArrAdd(burstMAT[b%:1][27:1],mTrough);
+    ArrAdd(burstMAT[b%:1][28:1],SDtrough);
+    ArrAdd(burstMAT[b%:1][29:1],CVtrough);
+    ArrAdd(burstMAT[b%:1][30:1],minTrough);
+    ArrAdd(burstMAT[b%:1][31:1],maxTrough);
+    ArrAdd(burstMAT[b%:1][32:1],deltaTrough);
+    ArrAdd(burstMAT[b%:1][33:1],percTrough);
+    ArrAdd(burstMAT[b%:1][34:1],mAmp);
+    ArrAdd(burstMAT[b%:1][35:1],SDamp);
+    ArrAdd(burstMAT[b%:1][36:1],CVamp);
+    ArrAdd(burstMAT[b%:1][37:1],minAmp);
+    ArrAdd(burstMAT[b%:1][38:1],maxAmp);
+    ArrAdd(burstMAT[b%:1][39:1],deltaAmp);
+    ArrAdd(burstMAT[b%:1][40:1],percAmp);
+    ArrAdd(burstMAT[b%:1][41:1],mDur);
+    ArrAdd(burstMAT[b%:1][42:1],SDdur);
+    ArrAdd(burstMAT[b%:1][43:1],CVdur);
+    ArrAdd(burstMAT[b%:1][44:1],minDur);
+    ArrAdd(burstMAT[b%:1][45:1],maxDur);
+    ArrAdd(burstMAT[b%:1][46:1],deltaDur);
+    ArrAdd(burstMAT[b%:1][47:1],percDur);
+    else
+        ArrAdd(burstMAT[b%:1][0:1],trainstart[b%]);
+        ArrAdd(burstMAT[b%:1][1:1],trainTcorr);
+        ArrAdd(burstMAT[b%:1][2:1],TrainMinute);
+        ArrAdd(burstMAT[b%:1][3:1], b%+1);
+        ArrAdd(burstMAT[b%:1][4:1],ectopic%);
+        ArrAdd(burstMAT[b%:1][5:1], fail%);
+        ArrAdd(burstMAT[b%:1][6:1],-100000);
+        ArrAdd(burstMAT[b%:1][7:1],-100000);
+        ArrAdd(burstMAT[b%:1][8:1],-100000);
+        ArrAdd(burstMAT[b%:1][9:1],-100000);
+        ArrAdd(burstMAT[b%:1][10:1],-100000);
+        ArrAdd(burstMAT[b%:1][11:1],-100000);
+        ArrAdd(burstMAT[b%:1][12:1],-100000);
+        ArrAdd(burstMAT[b%:1][13:1],-100000);
+        ArrAdd(burstMAT[b%:1][14:1],-100000);
+        ArrAdd(burstMAT[b%:1][15:1],-100000);
+        ArrAdd(burstMAT[b%:1][16:1],-100000);
+        ArrAdd(burstMAT[b%:1][17:1],-100000);
+        ArrAdd(burstMAT[b%:1][18:1],-100000);
+        ArrAdd(burstMAT[b%:1][19:1],-100000);
+        ArrAdd(burstMAT[b%:1][20:1],-100000);
+        ArrAdd(burstMAT[b%:1][21:1],-100000);
+        ArrAdd(burstMAT[b%:1][22:1],-100000);
+        ArrAdd(burstMAT[b%:1][23:1],-100000);
+        ArrAdd(burstMAT[b%:1][24:1],-100000);
+        ArrAdd(burstMAT[b%:1][25:1],-100000);
+        ArrAdd(burstMAT[b%:1][26:1],-100000);
+        ArrAdd(burstMAT[b%:1][27:1],-100000);
+        ArrAdd(burstMAT[b%:1][28:1],-100000);
+        ArrAdd(burstMAT[b%:1][29:1],-100000);
+        ArrAdd(burstMAT[b%:1][30:1],-100000);
+        ArrAdd(burstMAT[b%:1][31:1],-100000);
+        ArrAdd(burstMAT[b%:1][32:1],-100000);
+        ArrAdd(burstMAT[b%:1][33:1],-100000);
+        ArrAdd(burstMAT[b%:1][34:1],-100000);
+        ArrAdd(burstMAT[b%:1][35:1],-100000);
+        ArrAdd(burstMAT[b%:1][36:1],-100000);
+        ArrAdd(burstMAT[b%:1][37:1],-100000);
+        ArrAdd(burstMAT[b%:1][38:1],-100000);
+        ArrAdd(burstMAT[b%:1][39:1],-100000);
+        ArrAdd(burstMAT[b%:1][40:1],-100000);
+        ArrAdd(burstMAT[b%:1][41:1],-100000);
+        ArrAdd(burstMAT[b%:1][42:1],-100000);
+        ArrAdd(burstMAT[b%:1][43:1],-100000);
+        ArrAdd(burstMAT[b%:1][44:1],-100000);
+        ArrAdd(burstMAT[b%:1][45:1],-100000);
+        ArrAdd(burstMAT[b%:1][46:1],-100000);
+        ArrAdd(burstMAT[b%:1][47:1],-100000);
+    endif
+    
+   
+    
+next
+
+var check%;
+
+FrontView(spkVH%);
+WindowTitle$(spkTitle$);
+Print("minute, bins, burst#, stim#, spike#, stim time [s],");
+Print("spike time [s],  corr stim time [s],  corr spike time [s], normT[ms],");
+Print("stim interval [s],   stim instFreq [Hz], spike interval [s], spike instfreq [Hz], delay [ms],  peakV[mV],  troughV[mV],");
+Print("amp[mV],  durthreshold[mV],  dur@6th [ms]\n");
+Print(spkMAT[0:count%-1][]);
+WindowSize(50,100);
+Window(0,0);
+Draw(0);
+FrontView(burstVH%);
+WindowTitle$(burstTitle$);
+Print("Stim time [s],StimTcorr [s],Minute, Burst#, # ectopic, # fail, Mean delay, SD delay, CV delay,");
+Print("Min delay, Max delay, Delta delay, Perc delay, Mean2 delay, SD2 delay,");
+Print("CV2 delay, Min2 delay, Max2 delay, Delta2 delay, Perc2 delay, Mean peak,");
+Print("SD peak, CVpeak, Min peak, Max peak, Diff peak, Perc peak, Mean trough, SD trough,");
+Print("CV trough, Min trough, Max trough, Diff trough, Perc trough, Mean amp, SD amp,");
+Print("CV amp, Min amp, Max amp, Diff amp, Perc amp, Mean dur, SD dur, CV dur,");
+Print("Min dur, Max dur, Diff dur, Perc dur\n");
+Print(burstMAT[0:nTrainstart%][]);
+repeat
+    check%:=EditFind("-100000",2);
+    EditClear();
+until
+check%=0;
+WindowSize(50,100);
+Window(50,0);
+Draw(0);
+
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+        
+        
+    

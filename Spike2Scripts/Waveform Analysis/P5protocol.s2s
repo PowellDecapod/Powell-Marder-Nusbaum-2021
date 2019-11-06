@@ -1,0 +1,153 @@
+'Script to create a multisweep xy view of the summed step sequence from P/5 protocol data. This will generate the sweeps
+'that can then be used for leak subtraction using the "SweepDiff" script.
+
+'Dirk Bucher, June 2009.
+
+
+'-------------------------
+'check if this is pointed at a time view window and close the script if not.
+
+var timeview%;
+timeview%:=ViewKind();
+
+if timeview% <> 0 then
+    Message ("This isn't a time view");
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+'--------------------------
+'Maximize the time view and get the title of the time view
+
+var title$;
+WindowVisible (3);		'sets the time view to the front
+title$:=WindowTitle$();
+
+'--------------------------
+'Check if Cursors are present and in the right order.
+
+var cur1,cur2;
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then
+    cur1:=0;
+    cur2:=MaxTime();
+else
+    cur1 := Cursor(1);
+    cur2 := Cursor(2);
+endif
+
+'--------------------------
+'Assign values to define the time values for the step sequence
+
+var waveChan%,evtChan%,Tstart,Tend,holdStart,holdEnd, ok%;
+
+DlgCreate ("select");
+DlgChan(1,"current channel",1);
+DlgChan(2,"event channel",2);
+DlgReal(3,"start from cycle event marker [ms]",-100000,100000);
+DlgReal(4,"end from cycle event marker [ms]",-100000,100000);
+DlgReal(5,"holding current start [ms]", -100000,100000);
+DlgReal(6,"holding current end [ms]",-100000,100000);
+
+ok%:=DlgShow(waveChan%,evtChan%,Tstart,Tend,holdStart,holdEnd);
+
+if ok%<>1 then
+    FrontView (App (3));
+    FileClose (0);
+endif
+
+'--------------------------
+'convert times to seconds
+
+Tstart:=Tstart/1000;
+Tend:=Tend/1000;
+holdStart:=holdStart/1000;
+holdEnd:=holdEnd/1000;
+
+'--------------------------
+'put event marker times into an array and count them
+
+var cycle%, trigger[100];
+
+cycle%:=ChanData(evtChan%,trigger[],cur1,cur2);
+
+if cycle%>256 then
+    Message("Too many trigger signals. Limit: 256. Set cursors accordingly.");
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+'---------------------------
+'get the sampling interval
+
+var dt;
+
+dt:=BinSize(waveChan%);
+
+'---------------------------
+'open a new xy view and return it's viewhandle
+    
+    var xy%;
+    xy%:=FileNew(12);
+    WindowTitle$("P5");
+    
+    
+'---------------------------
+'loop through cycles
+
+    var i%,k%,nPts%, wholechunk[1000000],holdingCurrent, fifthPts%, sumchunk[200000], third%,fourth%,fifth%;
+    var timebase[1000000];
+        
+
+for i%:=0 to cycle%-1 step 1 do
+    
+        FrontView(ViewFind(title$));        
+        ArrMul(wholechunk[],0);
+        ArrMul(sumchunk[],0);
+    nPts%:=ChanData(waveChan%,wholechunk[],trigger[i%]+Tstart,trigger[i%]+Tend);
+    holdingCurrent:=ChanMeasure(waveChan%,2,trigger[i%]+holdStart,trigger[i%]+holdEnd);
+    fifthPts%:=nPts%/5;
+        ArrAdd(wholechunk[:nPts%],(holdingCurrent*-1));
+        ArrAdd(sumchunk[:fifthPts%],wholechunk[:fifthPts%]);
+        ArrAdd(sumchunk[:fifthPts%],wholechunk[fifthPts%:fifthPts%]);
+        third%:=fifthPts%*2;
+        fourth%:=fifthPts%*3;
+        fifth%:=fifthPts%*4;
+        ArrAdd(sumchunk[:fifthPts%], wholechunk[third%:fifthPts%]);
+        ArrAdd(sumchunk[:fifthPts%], wholechunk[fourth%:fifthPts%]);
+    ArrAdd(sumchunk[:fifthPts%], wholechunk[fifth%:fifthPts%]);
+    ArrMul(sumchunk[:fifthPts%], -1);
+        ArrAdd(sumchunk[:fifthPts%], holdingCurrent);
+        
+        for k%:=0 to fifthPts%-1 step 1 do
+            timebase[k%]:=k%*dt;
+            next
+        FrontView(xy%);
+        if i% <> 0 then
+            XYSetChan(0);
+        endif
+        ArrMul(timebase[:fifthPts%],1000);
+        XYAddData((i%+1),timebase[:fifthPts%],sumchunk[:fifthPts%]);
+        XYDrawMode((i%+1),2,0);
+        XYColour((i%+1),0);
+        XYJoin((i%+1),1);
+        next
+    
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        

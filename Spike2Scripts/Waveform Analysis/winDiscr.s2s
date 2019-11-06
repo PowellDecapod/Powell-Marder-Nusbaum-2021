@@ -1,0 +1,177 @@
+'"Window Discriminator"
+
+'Script to extract events in a voltage window from a waveform channel. Set a window by placing 2 horizontal cursors into the channel (order of cursor numbers
+'doesn't matter). The peaks or troughs of the signal you want to extract should lie between the cursors.
+'Works either in "peak/trough" mode or in "data rising/falling through level" mode (assign in dialog).
+
+'"peak/trough":
+'A 2nd dialog pops up where you set the level (minimal amplitude of the peak to detect). This refers to the absolute amplitude and not the one inside the
+'voltage window! The script will initially detect all peaks or troughs and then in a second step eliminate the events that correspond to a voltage outside
+'the window.
+
+'"data rising/falling through level"
+'A 2nd dialog pops up that asks you for a tolerance range. The script uses the horizontal cursor positions as 2 different thresholds. It initially holds
+'events detected at the 2 thresholds in parallel and then subtracts the ones detected crossing the window from the ones entering the window. If the same
+'signal is detected at two different thresholds there is a slight offset in time. Therefore, a tolerance range in time is needed to do the event subtraction.
+'You can check what the range should be first in the data file using cursors. 
+
+
+'Dirk Bucher, December 2002.
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+  	halt							'...if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (1) <> 0 and Cursor (2)/Cursor (1)<1 or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  		halt																		'stops the script
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var ok1%, ok2%, input%, output%, name$, mode%, int, level;    'sets variables
+
+mode%:=0|1|2|3; 'list for mode assignment		
+
+DlgCreate ("Waveform to Event");												'creates the dialog to assign channels, analysis mode
+DlgChan (1, "Import channel",513);												'(mark peaks, troughs, data rising or falling through a level).
+DlgChan (2, "New channel #",128);
+DlgString (3, "New channel name",15);
+DlgList (4,"Mode","Peaks|Troughs|Data rising through level|Data falling through level");
+DlgReal (5, "Minimum interval [s]", 0,100);
+
+	name$:="New events";							'presets
+	mode%:=0;
+	int:=0.001;
+
+ok1%:=DlgShow (input%, output%, name$, mode%, int);		'show the dialog
+
+if ok1%=1 then				'if "OK" was clicked...
+
+var mess$, channel$;
+channel$:=Str$(input%);
+mess$:="Set Cursors in channel "+channel$;
+
+var yH, yL;
+yH:=YHigh(input%);
+yL:=YLow(input%);
+while not
+(HCursorExists(1) and
+HCursorExists(2) and
+HCursorChan(1)=input% and
+HCursorChan(2)=input%) do
+HCursorLabel(2);
+HCursorDelete(1);
+HCursorDelete(2);
+HCursorNew(input%,yL+(yH-yL)*0.9);
+HCursorNew(input%,yL+(yH-yL)*0.1);
+Interact(mess$, 384,0,"OK");
+wend
+
+var HCurLow, HCurHigh;
+
+if HCursor(1)<HCursor(2) then
+
+HCurLow:= HCursor(1);
+HCurHigh:= HCursor(2);
+
+else
+
+HCurLow:= HCursor(2);
+HCurHigh:= HCursor(1);
+
+endif
+
+var mem1%, mem2%;
+
+mem1%:=MemChan (2);
+mem2%:=MemChan (2);
+
+if mode%=0 or mode%=1 then
+
+DlgCreate ("Set Level");	
+DlgReal (1, "Level [mV]", -1000,1000);
+level:=1;
+ok2%:=DlgShow (level);		'show the dialog
+
+MemImport(mem1%, input%, cur1, cur2 ,mode% , int, level);
+
+var all[100000], nAll%, j%;
+
+nAll%:= ChanData (mem1%, all[], cur1, cur2);
+
+for j% := 0 to nAll%-1 step 1 do
+
+if ChanValue (input%, all[j%]) > HCurHigh or ChanValue (input%, all[j%]) < HCurLow then
+
+MemSetItem (mem2%,0,all[j%]);
+endif
+next
+
+endif
+
+if mode%=2 or mode%=3 then
+
+var range;
+
+DlgCreate ("Set tolerance range");	
+DlgReal (1, "range [ms]", -1000,1000);
+range:= 5;
+ok2%:=DlgShow (range);		'show the dialog
+range:=range/1000;
+
+endif
+
+if mode%=2 then
+
+MemImport(mem1%, input%, cur1, cur2 ,mode% , int, HCurLow);
+MemImport(mem2%, input%, cur1, cur2 ,mode% , int, HCurHigh);	'imports the events to the buffer channel, as specified in the dialog
+
+endif
+
+if mode%=3 then
+
+MemImport(mem1%, input%, cur1, cur2 ,mode% , int, HCurHigh);
+MemImport(mem2%, input%, cur1, cur2 ,mode% , int, HCurLow);	'imports the events to the buffer channel, as specified in the dialog
+
+endif
+
+var all2[100000], nAll2%, i%, other[100000], nOther%;
+
+nAll2%:= ChanData (mem1%, all2[], cur1, cur2);
+nOther%:= ChanData (mem2%, other[], cur1, cur2);
+
+for i% := 0 to nOther%-1 step 1 do
+MemDeleteTime(mem1%,0,other[i%],range);
+next
+
+MemSave(mem1%,output%, 0, 0);	'saves buffer channel to a real channel
+ChanDelete(mem1%, 0);
+ChanDelete(mem2%, 0);'deletes the buffer channel
+ChanShow(output%);				'shows new channel
+ChanTitle$(output%,name$);		'names new channel
+DrawMode(output%,2);				'sets channel draw mode to "lines"
+
+endif
+
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+
+

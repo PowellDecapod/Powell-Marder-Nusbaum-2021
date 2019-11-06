@@ -1,0 +1,584 @@
+'$BatchImport01|Batch importer for foreign file formats
+'===========================================================================================================
+'CAMBRIDGE ELECTRONIC DESIGN LIMITED, THE SCIENCE PARK, MILTON RD., CAMBRIDGE CB6 0FE, UK
+'===========================================================================================================
+
+'Copyright © Cambridge Electronic Design 2015
+'Author:	GH. 
+'last modified: July 2015 GH
+
+'SOFTWARE REQUIREMENTS:
+'This script requires Spike2 8.04 or higher.
+'Some of the importers will only work in the 32-bit build of Spike 2. A warning message will display if you try to use one of these importers
+'with a 64-bit build of Spike2.
+'If this happens then you will need to install a second, 32-bit copy of Spike2 (in a separate folder) via your installation disk.
+'Upgrade it to the latest version 8 via the CED website. You can then use this version for importing.
+'Some importers (e.g DSI) require a dongle. Some others may only work if the software package used to record the source data is present on
+'the computer.
+
+'HEALTH WARNING:
+'The script is a <work in progress> and is offered without guarantees.
+
+'KEYWORDS
+'Import, Batch
+
+'OVERVIEW
+'This script attempts to import all of the 'foreign' data files of a specified type in a folder into Spike2 format.
+'The script should work for all of the file formats that can be imported interactively via the Import button on the Spike2 File menu.
+'It simply automates the process to save time (and repetitive strain injuries) when you have multiple files to import.
+
+'Spike2 files are saved to the same folder as the source files.
+
+'USER GUIDE
+'When you run the script for the first time, you will be prompted to create a hotkey (labelled BATCHIMP) on the script bar.
+'Click this hotkey whenever you want to run the script.
+'The script creates a toolbar with 4 buttons: IMPORT | FORMAT | PREFERENCES | QUIT
+
+'QUIT          simply close the script when you are finished.
+
+'PREFERENCES   opens a dialog where you can choose the number of channels to create in the destination Spike 2 files and whether or to show
+'             a progress bar and other information during the import of individual data files.
+'             Note the script should always create enough channels to import the data. The channel count that you specify in Preferences will determine
+'             how many 'spare' channels will be available for additional channels created as part of your data analysis. The count of channels in the
+'             Spike2 file is inn the range: 32-400.
+
+'FORMAT        Click here to choose the file type you want to import from a drop-down list. A warning message will appear if you are running a
+'             64-bit version of Spike2 and select an importer that only works in the 32-bit version. Further useful information relevant
+'             to the current importer is displayed in the NOTES section. You can get further technical information about importing by clicking then
+'             HELP button in the dialog.
+'             Click on OK to continue.
+'             If you selected binary or text import a second dialog will open for entering further information.
+
+'Importing Text
+'In order to import a text file you must create a configuration file in advance that contains information on the number of channels, the sample rate etc.
+'To do this, you need to go through the procedure of importing one of your text files MANUALLY via the Import button on the Spike2 File menu. Spike2 will
+'update the configuration file <Ascii_Last.icfx> accordingly.
+'When you run a the script and choose the Text importer, a second dialog will allow you to choose the configuration Ascii_Last.icfx as the configuration
+'to use for the batch import.
+'An alternative approach is to create your own named configuration file during the manual import process and save it. You must save it to the
+'"current users application data folder". Tn Windows 7 this path is:    C:\Users\User\AppData\Local\CED\SpikeN where User is the user name.
+'If you save to this folder, then your customised configuration file will be available for selection from the second text import dialog.
+
+'Importing Binary files
+'Here also, you need to create a configuration file tailored to your source files by importing a data file interactively via the Spike2 File/Import menu.
+'By default this will update the config file <Bin_last.icfx>. you can then choose this configuration from the secondary dialog after choosing Binary import.
+'As with Text import you can also create your own named configuration during the manual binary import if you wish. This configuration will be available for
+'selection in the Binary import dialog provided that you saved it to the correct folder.
+'Further information is also required in the binary import dialog related to the data format. 
+'There is also an option to enter comma-separated list of channel titles and channel units. If these items are left blank then the imported file will use
+'ch(n) as the the channel title and V as the channel units.
+
+'Importing HEKA files Note that HEKA files require user interaction since you must choose a file to import from a tree of folders.
+
+'IMPORT       The IMPORT button will enable after you have selected the required data format. Click here to browse to a folder containing the 
+'             files to import. Click on OK to start importing all the files with a file type that matches your selection. A printout in the log view will
+'             indicate progress. If the checkbox in the Preferences dialog was checked, you will also get a progress dialog with a <Cancel> button.
+'             Clicking on the <Cancel> button may or may not have an effect depending on which importer is running and what stage has been reached in
+'             the importing process. Where it does work, it will cancel import of the current file and the script will start processing the next file
+'             in the list.
+
+'             Depending on the size of the source data files, the import may take a significant time.
+'             If you are concerned about the time required, it may be wise to sub-divide the source files into
+'             several sub-folders so that you can import data in manageable chunks.
+'             Note that the script imports files in the current folder but not sub-folders of the current folder.
+
+proc Revisions()                                        ' revision history only
+'MC Rack should now work with 64-bit build of Spike2
+'DSI files should now import correctly. DSI importer should cope with one layer of nesting of subfolders containing DSI data
+end;
+
+#include "ghutils.s2s"                                  ' include library of useful script functions
+'var txtvh%;
+var ver%;
+var nsf%;
+'=========
+var flag%;                                              ' 4: show import progress bar;    0: just do it.
+var minch%;                                             ' number of channels to create in destination file 
+var showhide%;                                          ' flag show/hide Help page
+var key$:="batchimp";
+var prefs$;
+var script$,set$,version;
+var b%, build$[2]:={"32-bit","64-bit"};
+var cmd$;
+var dllndx%;                                            ' index for which importer
+var ntypes%;                                            ' number of different file extensions to imported
+var fext$[5];                                           ' up to 5 possible extensions for a single importer
+var di%;                                                ' dialog item nr.
+const off%:=0,on%:=1;
+var bigend%,dtype%:=2,srate:=1000.0,nchans%:=3,ttllst$,unitslst$; ' additional parameters for binary importer
+var bin$;
+var cfgndx%;
+
+var src$[38]:={"Alpha MED Sciences","Alpha Omega Engineering","Axon Instruments","Axona","Binary data","Bionic/Cyberkinetics", 
+"Biopac","CED CFS (Signal)","CED / SON (Macintosh)","COLD_Datein","CONSAM","DATAQ Instruments","DataWave","DATAPAC","DSI","DSI v5",
+"Delsys Files","elmiko medical","European Data Format(+)","Grass-Telefactor","HLR Data Format","Heka Data Format","Intan",
+"Multi Channel System (Mc_Rack)","MindSet (16/24) data Files","MindWare data files","Motion Lab Systems","Native ADC","NeuroScan",
+"New Behavior","Neuralynx","Plexon","RC Electronics","Text files","TMS International","Tucker-Davis Technologies",
+"WAV (Microsoft)","WaveMetrics Igor Pro"};              ' list of foreign formats
+
+var dll$[38]:={"med64","alpha","axon","Axona","binary","bionic","biopac","cfsdll","sondll","colddll","consdll","codas","uffdll",
+"datapaq","dataq","dataqv5","delsys","elmiko","edf","polyview","hlr","heka","intandll","mcdata","mindset","mindw","c3d","nadcdll","neuro",
+"neurolog","nlynx","plexon","rcelectr","asciidll","tmsi","tdtdll","mswave","igor"}; ' list of matching import dlls
+
+version:= App(-1)/100.0;                                ' get spike2 version
+b%:=App(-6);                                            ' get build
+if version<8.04 then
+    Message("This script requires Spike2 version 8.04 or higher.\n"+
+    "You are currently running Spike2 version %.2f  (%s).",version,build$[b%]);
+    halt;
+endif;
+
+script$:=View(App(3)).FileName$(0);                     ' full name of script -including volume and path
+set$:="BatchImp|"+script$+"|Batch import foreign format files"; ' label for script bar button
+'-------------------------------------------------------------------------------------------
+AddScriptBarBtn%(set$);                                 ' comment this line if you do not want to add a button to the Script bar
+'-------------------------------------------------------------------------------------------
+HideApps();
+Profile(key$,"prefs","100,4",prefs$);                   ' get preferences from the profile
+ReadStr(prefs$,minch%,flag%);
+Profile(key$,"binaryimp","0,0,2,0,3,1000.0,\"\",\"\"",bin$);
+ReadStr(bin$,cfgndx%,dtype%,bigend%,nchans%,srate,ttllst$,unitslst$); ' get stored settings for Binary importer
+Profile(key$,"lastused",1,dllndx%);                     ' default to most recently used importer
+Logsetup();
+DoToolbar();
+RestoreApps();
+halt;
+
+proc DoToolbar()
+ToolbarClear();
+ToolbarSet(1,"&Quit||Hotkey: Q",Quit%);
+ToolbarSet(3,"&Preferences||Hotkey:  P",Prefs%);
+ToolbarSet(5,"&Format||Hotkey: F ;  Select file format to import",SelectFormat%);
+ToolbarSet(7,"&Import||Hotkey: I ;  Browse to folder and import contents",DoImport%);
+ToolbarEnable(7,off%);                                  ' disable import button until user selects the file type to import
+Toolbar("Batch import script",511);
+end;
+
+func Quit%()
+View(LogHandle());
+EditselectAll();
+EditClear();
+WindowVisible(2);                                       ' iconise the log
+Profile(key$,"lastused",dllndx%);
+return 0;
+end;
+
+func SelectFormat%()
+var p$;
+var ok%;
+p$:=Filepath$(-3);                                      ' get path to folder where configuration files are stored
+
+Help(0);
+showhide%:=0;                                           ' start with Help window closed
+DlgCreate("Format of source files",70,5,53);
+DlgAllow(511,0,SelChnge%);
+DlgText("Select",2,1);
+DlgList(1,30,src$[],38,-2,1);
+DlgGroup("Notes",1,2.5,51,1.8);
+di%:=DlgText("",3,3.3,48);
+DlgButton(2,"Help",DoHelp%);
+ok%:=DlgShow(dllndx%);
+Help(0);                                                ' close Help window
+showhide%:=0;
+if ok%=0 then return 1; endif;                          ' cancelled
+
+'find the matching file types for the chosen importer
+docase
+case dllndx%=0 then ntypes%:=2; fext$[0]:="dat"; fext$[1]:="modat"; ' alpha med
+case dllndx%=1 then ntypes%:=2; fext$[0]:="map"; fext$[1]:="mpx"; ' alpha omega
+case dllndx%=2 then ntypes%:=2; fext$[0]:="dat"; fext$[1]:="abf"; ' axon
+case dllndx%=3 then ntypes%:=1; fext$[0]:="bin";        ' axona
+case dllndx%=4 then ntypes%:=2; fext$[0]:="bin"; fext$[1]:="dat"; ' binary data
+case dllndx%=5 then ntypes%:=3; fext$[0]:="nev"; fext$[1]:="rnd";  fext$[2]:="ns*"; ' bionic
+case dllndx%=6 then ntypes%:=1; fext$[0]:="acq";        ' biopac
+case dllndx%=7 then ntypes%:=2; fext$[0]:="dat"; fext$[1]:="cfs"; ' CED Signal
+case dllndx%=8 then ntypes%:=2; fext$[0]:="smr"; fext$[1]:="son"; ' CED SON (Macintosh)
+case dllndx%=9 then ntypes%:=1; fext$[0]:="*";          ' Pulsion Med Systems
+case dllndx%=10 then ntypes%:=2; fext$[0]:="ssd"; fext$[1]:="dat"; ' CONSAM (Colquhoun)
+case dllndx%=11 then ntypes%:=1; fext$[0]:="acq";       ' DataQ
+case dllndx%=12 then ntypes%:=3; fext$[0]:="uff"; fext$[1]:="cut";  fext$[2]:="ewb"; ' DataWave
+case dllndx%=13 then ntypes%:=3; fext$[0]:="par"; fext$[1]:="pbr";  fext$[1]:="pcr"; ' DataPac
+case dllndx%=14 then ntypes%:=1; fext$[0]:="*";         ' dsi (old)
+case dllndx%=15 then ntypes%:=1; fext$[0]:="*";         ' dsi (new)
+case dllndx%=16 then ntypes%:=1; fext$[0]:="emg";       ' DELSYS
+case dllndx%=17 then ntypes%:=1; fext$[0]:="*";         ' elmiko
+case dllndx%=18 then ntypes%:=2; fext$[0]:="edf"; fext$[1]:="bdf"; ' EDF
+case dllndx%=19 then ntypes%:=1; fext$[0]:="bin";       ' Grass
+case dllndx%=20 then ntypes%:=1; fext$[0]:="hlr";       ' HLR (Playton, Plyton)
+case dllndx%=21 then ntypes%:=1; fext$[0]:="dat";       ' HEKA
+case dllndx%=22 then ntypes%:=1; fext$[0]:="*";         ' Intan
+case dllndx%=23 then ntypes%:=1; fext$[0]:="mcd";       ' MC Rack
+case dllndx%=24 then ntypes%:=1; fext$[0]:="bin";       ' MindSet
+case dllndx%=25 then ntypes%:=1; fext$[0]:="mw";        ' MindWare
+case dllndx%=26 then ntypes%:=1; fext$[0]:="c3d";       ' Motion Lab Systems
+case dllndx%=27 then ntypes%:=1; fext$[0]:="adc";       ' Native ADC
+case dllndx%=28 then ntypes%:=2; fext$[0]:="eeg"; fext$[1]:="cnt"; ' NeuroScan
+case dllndx%=29 then ntypes%:=1; fext$[0]:="hex";       ' New Behaviour
+case dllndx%=30 then ntypes%:=5; fext$[0]:="nev"; fext$[1]:="ncs";  fext$[2]:="ntt"; fext$[3]:="nse"; fext$[4]:="nst"; ' NeuraLynx
+case dllndx%=31 then ntypes%:=3; fext$[0]:="nex"; fext$[1]:="plx";  fext$[2]:="ddt"; ' Plexon
+case dllndx%=32 then ntypes%:=3; fext$[0]:="prm"; fext$[1]:="inx";  fext$[2]:="dat"; ' RC Electronics
+case dllndx%=33 then ntypes%:=2; fext$[0]:="txt"; fext$[1]:="asc"; ' Text
+case dllndx%=34 then ntypes%:=1; fext$[0]:="s00";       ' TMS International
+case dllndx%=35 then ntypes%:=1; fext$[0]:="tsq";       ' Tucker Davies
+case dllndx%=36 then ntypes%:=1; fext$[0]:="wav"; fext$[1]:="modat"; ' WAV (Microsoft)
+case dllndx%=37 then ntypes%:=3; fext$[0]:="igo"; fext$[1]:="ibw";  fext$[2]:="pxp"; ' WaveMetrics
+endcase;
+
+if dllndx%=4 or dllndx%=33 then                         ' binary or text selected. prepare a list of possible configuration files
+    var cfg$[1],oldp$,nf%;
+    oldp$:=FilePath$();                                 ' get current directory
+    FilePathSet(p$);                                    ' change to directory holding config files
+    nf%:=FileList(cfg$[],-1,"*.icfx");                  ' list available config files
+    resize cfg$[nf%];
+    FileList(cfg$[],-1,"*.icfx");
+    FilePathSet(oldp$);                                 ' revert to previous folder
+endif;
+
+docase
+case dllndx%=4 then                                     ' binary data.      Much more information required... 
+    DlgCreate("Import binary",0,5);
+    DlgAllow(511);
+    DlgList(1,"Select Configuration file",cfg$[],nf%);
+    DlgText("Data type",2,2);
+    DlgList(2,28,"8-bit signed integers|8-bit unsigned integers|16-bit signed integers|16-bit unsigned integers|32-bit signed integers|"+
+    "single-precision floating point|double-precision floating point",7);
+    DlgText("Format",2,3);
+    DlgList(3,15," little-endian| big-endian",2);
+    DlgInteger(4,"Channels|Number of waveform channels",1,100,0,0,1);
+    DlgReal(5,"Sample rate (Hz)",0.1,1e6);
+    
+    DlgGroup("Optional extras",1,6.2,82,2.9);
+    DlgString(6,"Channel titles|comma separated list; Default names: Chan (n)",80,"",0,7.1);
+    DlgString(7,"Channel units|comma separated list; Default units: (V)",80,"",0,8.1);
+    DlgButton(2,"Help",DoHelp%);
+    ok%:=DlgShow(cfgndx%,dtype%,bigend%,nchans%,srate,ttllst$,unitslst$);
+    
+    Help(0);                                            ' close Help window
+    showhide%:=0;
+    if ok%=0 then return 1; endif;                      ' cancelled
+    if Instr(Lcase$(cfg$[cfgndx%]),"asci")>0 then Message("Error|Not a valid binary import configuration file"); return 1; endif;
+    
+    bin$:=Print$("%d,%d,%d,%d,%.2f,\"%s\",\"%s\"",cfgndx%,dtype%,bigend%,nchans%,srate,ttllst$,unitslst$); ' pack binary import parameters into a string
+    Profile(key$,"binaryimp",bin$);                     ' save string to registry
+    cmd$:=Print$("conf=%s%s;Bigend=%d;Type=%d;Rate=%.2f;Chans=%d;Names=%s;Units=%s; dll=%s; ",p$,cfg$[cfgndx%],bigend%,dtype%,srate,nchans%,ttllst$,unitslst$,dll$[dllndx%]); ' binary importer
+    
+case dllndx%=33 then                                    ' text importer
+    DlgCreate("Import Text",0,5,50);
+    DlgAllow(511);
+    DlgList(1,"Select Configuration file|Last used config:  <Ascii_Last.icfx>",cfg$[],nf%);
+    DlgButton(2,"Help",DoHelp%);
+    ok%:=DlgShow(cfgndx%);
+    
+    Help(0);                                            ' close Help window
+    showhide%:=0;    
+    if ok%=0 then return 1; endif;                      ' cancelled
+    if Instr(Lcase$(cfg$[cfgndx%]),"bin_")>0 then Message("Error|Not a valid text import configuration file"); return 1; endif;
+    
+    cmd$:=Print$("conf=%s%s; dll=%s; ",p$,cfg$[cfgndx%],dll$[dllndx%]);    
+else
+    ' cmd$:="dll="+dll$[dllndx%];	                           
+    cmd$:=Print$("dll=%s;AppVer=Spike,%d",dll$[dllndx%],App(-1)); ' set the appropriate dll
+endcase;
+ToolbarText(Print$("Current Importer:   %s",src$[dllndx%]));
+ToolbarEnable(7,on%);
+return 1;
+end;
+
+func DoHelp%()
+var ok%;
+if showhide% =0 then
+    ok%:=Help("Import folder");                         ' show help
+    showhide%:=1;
+else
+    ok%:=Help(0);                                       ' hide help
+    showhide%:=0;
+endif;
+return 1;
+end;
+
+func SelChnge%(item%)
+var imppath$;                                           ' path to folder containing the Importer dlls
+var path$:=FilePath$(0);                                ' current path
+var i%,nf%,name$,mask$,ok%;
+var msg$[38]:={"Conductor, Performer and Mobius data",   ' 0
+"Waveform, WaveMark, RealMark and Event channels",       ' 1
+"Imports 16-bit integer and 32-bit float",               ' 2
+"Waveforms only",                                        ' 3
+"Enter full details in the following dialog",            ' 4
+"Can import files larger than 2GB",                      ' 5
+"version 45 files and older",                            ' 6
+"",                                                      ' 7
+"",                                                      ' 8
+"Pulsion Medical Systems",                               ' 9
+"from Prod. D Colquhoun (supports v1001,1002)",          ' 10
+"Waveforms and TextMarks",                               ' 11
+"Discovery and Workbench files",                         ' 12
+"Waveform, RealWave and Event data",                     ' 13
+"DSI dongle required. One level of nested folders supported.", ' 14
+"DSI dongle required. One level of nested folders supported.", ' 15
+"supports Version 4",                                    ' 16
+"Waveforms",                                             ' 17
+"16 and 24-bit data",                                    ' 18
+"PolyView from v2.0",                                    ' 19
+"Platon and Pyton version 3.00 and 4.00",                ' 20
+"Waveforms",                                             ' 21
+"Waveforms",                                             ' 22
+"12 and 16-bit data",                                    ' 23
+"MindSet and MindMeld files",                            ' 24
+"Waveforms",                                             ' 25
+"Waveforms",                                             ' 26
+"Polish Universities format",                            ' 27
+"16 and 32-bit data",                                    ' 28
+"Neurologger (Waveforms)",                               ' 29
+"Waveform, WaveMark, TextMark",                          ' 30
+"data generated by the Plexon version 1.07 library",     ' 31
+"Imports 12 and 16-bit data",                            ' 32
+"Select configuration file in the next dialog.",         ' 33
+"Waveform , Marker",                                     ' 34
+"You also need the <.tev> file to import the data",      ' 35
+"Waveform",                                              ' 36
+"PC and Mac files up to and including version 5"};      ' 37
+
+if item% =0 then DlgEnable(2,1); endif;                 ' focus on item 1
+DlgEnable(1,-1);                                        ' enable <OK> 
+i%:=DlgValue(1);
+if b%=1 then                                            ' 64-bit Spike2 in use
+    if i%=2 or i%=6 or i%=14 or i%=15 then              ' these importers only work with 32-bit Spike2         or i%=23
+        DlgEnable(0,-1);                                ' disable <OK> 
+        Message("Error|This importer only works in a 32-bit version of Spike2.\n\n"+
+        "Tip: Install a 32-bit version of <Spike2> in a different folder via your installation disk.\n"+
+        "Upgrade this version to the latest via the CED website. Use this Spike version to import data.");
+    else
+        DlgEnable(1,-1);                                ' enable <OK> button
+    endif;    
+endif;
+'ToolbarText(Print$("i%:=%2d",i%));          'debug only
+
+imppath$:=FilePath$(2);                                 ' path to application
+imppath$+="import";
+ok%:=FilePathSet(imppath$);                             ' go to the import folder
+mask$:=dll$[i%];
+mask$+=".*";                                            ' search for chosen importer
+nf%:=FileList(name$,-1,mask$);                          ' check whether the dll for the chosen importer exists
+FilePathSet(path$);                                     ' make previous folder current
+if nf%>0 then                                           ' dll found
+    DlgValue$(di%,msg$[i%]);                            ' update notes when user selects a different importer
+else
+    DlgValue$(di%,"This importer is not available.");
+    DlgEnable(0,-1);                                    ' disable <OK>
+endif;
+return 1;
+end;
+
+func Prefs%()
+var flagndx%;
+
+if flag%>0 then flagndx%:=1; endif;
+DlgCreate("Preferences",70,5);
+DlgInteger(1,"Minimum nr. of channels in output files",32,400,0,0,10);
+DlgCheck(2,"Check to show progress dialogs|Uncheck for minimum feedback.");
+DlgButton(0,"");                                        ' no <Cancel> button
+DlgShow(minch%,flagndx%);
+if flagndx%=1 then
+    flag%:=4;
+else
+    flag%:=0;
+endif;
+prefs$:=Print$("%d,%d",minch%,flag%);
+Profile(key$,"prefs",prefs$);                           ' save selections for next time
+return 1;
+end;
+
+func DoImport%()	                                       
+var ok%,flst$[2],nf%,i%,j%,err%,mask$,tvh%;
+var rpath$;
+var ngood%,nbad%;                                       ' counters for successful and failed import
+
+if dllndx%=14 or dllndx%=15 then                        ' dsi files require extra processing
+    ok%:=ImportDSI%();
+    return 1;
+endif;
+
+ok%:=FilePathSet("",0,"Select Source folder");
+if ok%<0 then return 0; endif;                          ' cancelled
+rpath$:=FilePath$();                                    ' store the chosen path.
+
+FrontView(LogHandle());                                 ' show the progress report
+
+for j%:=1 to ntypes% do                                 ' process each file type in turn
+    Seconds(0);                                         ' zero timer
+    mask$:="*."+fext$[j%-1];                            ' next file type...
+    nf%:=FileList(flst$[],-1,mask$);                    ' count files in this folder
+    Printlog("\nFolder:  %s  (%s  files: %2d )\n\n",rpath$,mask$,nf%);
+    if nf%>0 then
+        resize flst$[nf%];
+        FileList(flst$[],-1,mask$);                     ' list files of type <mask$> in this folder
+        var smr$[nf%];
+        for i%:=0 to nf%-1 do                           ' import each file
+            ToolbarText(Print$("   PROGRESS:   importing  %s",flst$[i%]));
+            Printlog("       %s\tin progress...\n",flst$[i%]);
+            Yield();
+            if dllndx%=21 then                          ' HEKA files require user interaction
+                smr$[i%]:=FileConvert$(flst$[i%],"",2,err%,cmd$ ,minch%);                
+            else
+                smr$[i%]:=FileConvert$(flst$[i%],"",flag%,err%,cmd$ ,minch%); ' all other importers
+            endif;
+            View(LogHandle());
+            MoveBy(1,0,-1);                             ' select previous line
+            EditClear();                                ' delete "in progress"
+            docase
+            case err%<0 then
+                Printlog("%d     %s\tImport failed      (%s)\n",i%+1,rpath$+flst$[i%],Error$(err%));
+                nbad%+=1;
+            case err%=0 then                
+                Printlog("%d     %s\tin %2d min %2d s\n",i%+1,rpath$+flst$[i%],Seconds()/60,Seconds() mod 60); ' make list of files that imported successfully
+                
+                tvh%:=FileOpen(smr$[i%],0,3);          ' open Spike2 file and set up standard state
+                if tvh%>0 then
+                    XRange(0,600.0);
+                    ChanShow(-1);                       ' show all
+                    Optimise(-1);                       ' optimise all
+                    Window(50,0,100,50);
+                    WindowVisible(1);
+                    Yield(0.5);                         ' time to draw and tidy up
+                    FileClose(0,-1);                    ' file will now have a matching resource file
+                endif;
+                ngood%+=1;
+            case err%>0 then
+                Printlog("%d     %s\tImport cancelled\n",i%+1,rpath$+flst$[i%]); ' cancelled
+                nbad%+=1;
+            endcase;     
+            Yield();                                    ' time to update the printout
+        next;
+        ToolbarText("");
+    endif;
+next;    
+Printlog("\nSUMMARY\nFiles imported successfully %2d\tFailed to import  %2d\n",ngood%,nbad%);
+Printlog("==============================================================================\n");
+return 1;
+end;
+
+proc Logsetup()
+View(LogHandle());                                      ' prepare the log view for the progress report
+TabSettings(30);
+Window(0,0,50,65);                                      ' set window size and position
+WindowVisible(2);                                       ' iconise
+EditSelectAll();                                        ' clear
+EditClear();
+end;
+'====='separate DSI import functions added July 2015
+func ImportDSI%()
+var ok%,path$,nsf%,err%,i%;
+var sf$[1],sfpath$;
+
+ok%:=FilePathSet("",0,"Browse to a folder containing DSI v5 files"); ' select a folder
+if ok%<0 then
+    return 1;                                           ' cancelled
+endif;
+'path not set
+path$:=FilePath$(0);                                    ' get the path
+
+'View(LogHandle());
+'Window(0,50,50,100);
+LogSetup();
+Printlog("DSI import:\n\n");
+WindowVisible(1);                                       ' show progress window
+
+nsf%:=FileList(sf$[],-2);                               ' count sub-folders
+
+err%+=ProcessFolder%(path$);                            ' process files in the selected folder
+'process sub-folders
+if nsf%>0 then	                                       
+    resize sf$[nsf%];                                   ' array of sub-folders
+    FileList(sf$[],-2)                                  ' list of sub folders
+    for i%:=0 to nsf%-1 do
+        sfpath$:=path$+sf$[i%]+"\\";
+        ok%:=FilepathSet(sfpath$,0);
+        err%+=ProcessFolder%(sfpath$);
+    next; 
+endif;
+
+FilepathSet(path$);                                     ' reset the current folder to the original selection
+Printlog("\nDSIv5 importer finished.\n");
+if err%>0 then
+    Printlog("%d folder(s) found. %d folder(s) imported.",nsf%+1,nsf%+1-err%);
+endif;
+return 1;
+end;
+
+func ProcessFolder%(path$)                              ' import DSIv5 files from the folder: path$
+'prints a listing of folders that were imported successfully in the log
+'returns a count of folders  from which no DSI data could be imported.
+
+var allfiles$[2],allnames$[2],nf%,i%,count%,fcount%;
+var err%,file$,tvh%;                                    ' cmd$,
+
+nf%:=FileList(allfiles$[],-1,"*.*");                    ' count files in the folder
+resize allfiles$[nf%],allnames$[nf%];                   ' extend arrays of file names and root titles
+Filelist(allfiles$[],-1,"*.*");                         ' fill array with file names
+'make a list of root titles
+for i%:=0 to nf%-1 do
+    allnames$[i%]:=Mid$(allfiles$[i%],1,Instr(allfiles$[i%],".")-1); ' take everything before the dot as root name
+next;
+ArrSort(allnames$[],0,allfiles$[]);                     ' sort root names in ascending order
+
+'how many different names?
+i%:=1;
+count%:=1;
+repeat
+    if allnames$[i%]<>allnames$[i%-1] then
+        count%+=1;
+    endif;
+    i%+=1;
+until i%>=nf%-1;
+'count% now holds the number of different root names
+
+var slist$[count%],dlist$[count%];                      ' lists of first source file in each series and name of destination file
+count%:=1;
+slist$[0]:=allfiles$[0];
+dlist$[0]:=allnames$[0]+".smrx";
+for i%:=1 to nf%-1 do
+    if allnames$[i%]<>allnames$[i%-1] then
+        slist$[count%]:=allfiles$[i%];                  ' store first filename of each series in array
+        dlist$[count%]:=allnames$[i%]+".smrx";
+        count%+=1;
+    endif;    
+next;
+
+'Import the data
+var failedflg%:=1;
+fcount%+=1;                                             ' counter of folders processed
+ToolbarText(Print$("Importing folder %d of %d.   %s.",fcount%,nsf%+1,path$));
+for i%:= 0 to count%-1 do
+    Seconds(0);                                         ' zero the timer
+    Printlog("%s\tin progress...\n",slist$[i%]);
+    Yield();
+    file$:=FileConvert$(path$+slist$[i%], path$+dlist$[i%], flag%, err%, cmd$,minch%); ' import to Spike2
+    if err%=0 then
+        tvh%:=FileOpen(file$,0,3);                      ' open Spike2 file and set up the display
+        if tvh%>0 then
+            XRange(0,600.0);
+            ChanShow(-1);                               ' show all
+            Optimise(-1);                               ' optimise all
+            Window(50,0,100,50);
+            WindowVisible(1);
+            Yield(0.5);                                 ' time to draw and tidy up
+            FileClose(0,-1);                            ' file will now have a matching resource file
+            
+            View(Loghandle());
+            MoveBy(1,0,-1);                             ' select previous line
+            EditClear();                                ' delete "in progress"
+            Printlog("%s\tin %2d min %2d s\n",path$+dlist$[i%],Seconds()/60,Seconds() mod 60); ' make list of files that imported successfully
+            failedflg%:=0;                              ' flag that something was imported from this folder
+        endif;
+    else
+        View(Loghandle());                              ' delete "in progress"
+        MoveBy(1,0,-1);                                 ' select previous line
+        EditClear();                                    ' clear selection
+        Printlog("%s\t Import failed.\n",path$+dlist$[i%]); ' failed
+        ' Newsflash(Print$("Error|File: %s. Error:  %s",dlist$[i%],Error$(err%))3,0,5,1);
+    endif;        
+next;
+return failedflg%;                                      ' return number of folders that did not import
+end;
+

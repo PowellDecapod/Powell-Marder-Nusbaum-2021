@@ -1,0 +1,128 @@
+'"gastric/pyloric interactions"
+'Script to do burst analysis of a fast rhythmic signal with respect to a slow rhythmic signal (as
+'in pyloric/gastric). Returned are the fast period, instantaneous burst frequency, burst duration,
+'number of spikes,spike frequency, and the period, duration and phase of the slow signal at the time of
+'the fast cycle.
+
+'Dirk Bucher, July 2005
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var gChan%, pChan%, SpkChan%,ok1%;
+DlgCreate("Select");
+DlgChan(1,"gastric reference channel", 8);
+DlgChan(2,"pyloric reference channel", 8);
+DlgChan(3,"pyloric spike channel", 2);
+
+ok1%:=DlgShow(gChan%, pChan%, SpkChan%);
+
+var nGastricStart%, GastricStart[10000],nGastricEnd%,GastricEnd[10000];
+MarkMask(gChan%,-1,1,-1);  'reset = include all codes
+MarkMask(gChan%,0,-1,-1);		'set all codes off
+MarkMask(gChan%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nGastricStart%:=ChanData(gChan%,GastricStart[],cur1,cur2);	'get levator burst start times
+
+MarkMask(gChan%,-1,1,-1);  'reset = include all codes
+MarkMask(gChan%,0,-1,-1);		'set all codes off
+MarkMask(gChan%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nGastricEnd%:=ChanData(gChan%,GastricEnd[],GastricStart[0],cur2);	'get levator burst end times
+MarkMask(gChan%,-1,1,-1);  'reset = include all codes
+
+var nPyloricStart%, PyloricStart[10000],nPyloricEnd%,PyloricEnd[10000];
+MarkMask(pChan%,-1,1,-1);  'reset = include all codes
+MarkMask(pChan%,0,-1,-1);		'set all codes off
+MarkMask(pChan%,0,1,0);	'turn on code 0 = burst start only; 1=end code only
+
+nPyloricStart%:=ChanData(pChan%,PyloricStart[],cur1,cur2);	'get levator burst start times
+
+MarkMask(pChan%,-1,1,-1);  'reset = include all codes
+MarkMask(pChan%,0,-1,-1);		'set all codes off
+MarkMask(pChan%,0,1,1);	'turn on code 0 = burst start only; 1=end code only
+
+nPyloricEnd%:=ChanData(pChan%,PyloricEnd[],PyloricStart[0],cur2);	'get levator burst end times
+MarkMask(pChan%,-1,1,-1);  'reset = include all codes
+
+Printlog("pBurst#, Time, pPeriod, pIF, pDur, nSpks, SpkFreq, gPeriod, gDur, gPhase\n"); 
+
+var c%, j%, k%,pyloricPeriod, pyloricDur,gastricPeriod, gastricDur, PinGphase, nSpks%;
+
+c%:=0;
+repeat
+c%:=c%+1;
+until PyloricStart[c%]>Gastricstart[0];
+
+for j%:=c% to nPyloricStart%-1 step 1 do
+
+pyloricPeriod:=PyloricStart[j%+1]-PyloricStart[j%];
+pyloricDur:=PyloricEnd[j%]-PyloricStart[j%];
+nSpks%:=ChanMeasure(SpkChan%, 4, PyloricStart[j%], PyloricEnd[j%]);
+
+k%:=0;
+repeat
+k%:=k%+1;
+until
+GastricStart[k%]>PyloricStart[j%] or k%>nGastricStart%;
+if k%<nGastricStart% then
+gastricPeriod:=GastricStart[k%]-GastricStart[k%-1];
+gastricDur:=GastricEnd[k%-1]-GastricStart[k%-1];
+PinGphase:=(PyloricStart[j%]-GastricStart[k%-1])/gastricPeriod;
+Printlog("%d,%f,%f,%f,%f,%d,%f,%f,%f,%f\n",j%+1,PyloricStart[j%],pyloricPeriod, 1/pyloricPeriod, pyloricDur,nSpks%,(nSpks%-1)/pyloricDur,gastricPeriod, gastricDur, PinGphase);
+endif
+next
+
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+

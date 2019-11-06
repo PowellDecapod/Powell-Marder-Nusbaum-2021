@@ -1,0 +1,140 @@
+'"EMFsequ" - "Output sequence of metafiles from time views"
+
+'Script to automatically output metafiles from sequential time windows of a time view.
+'You specify a duration and an overlap between consecutive files. A sequence of metafiles is saved. 
+'The file sequence will be named by a specified file name (the dialog default is the name of the source .smr file) and a
+'running number. Example:
+		' timeview_001.wmf
+		' timeview_002.wmf
+		' timeview_003.wmf
+		'     .
+		'     .
+		'     .
+		' timeview_n.wmf
+' Files are saved as .emf (Enhanced Meta File) by default, but you have the option to save .wmf (Windows Meta File) instead
+'(checkbox in the dialog).
+'By default, the file sequence is saved to the current directory. To change directories, check box in the dialog.
+'To facilitate identification when you import the files into a graphics program, an empty channel is created that holds the running
+'number as the channel title. This channel is automatically deleted after each export. Also, the font size will be enlarged and switched to
+'ARIAL in the metafiles and the channel titles and numbers will be switched off.
+'CAUTION! The metafile size depends on the screen resolution and the preference settings. I recommend going to Edit/Edit preferences/Display and
+'setting "metafile output resolution for image export" to either "same as screen image" or "screen image x 2". Otherwise the files become too large.
+'You can also set line thickness in the preferences/display menu. I recommend "1" for data and "2" for axes.
+'Metafiles are kind of painful to handle in batches with any graphics program. I recommend getting some image file conversion software and batch convert
+'everything into Tiffs or JPEGs before processing further.
+
+'Dirk Bucher, January 2005
+
+
+'---------------------------------------------------------------------------------
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'---------------------------------------------------------------------------------
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$;		'gets the filename of the time view
+'--------------------------------------------------------------------------
+
+var name$,chk%,dur, overlap, dir%, ok2%, cur1,cur2;
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgString (1,"output file names: ",20);
+DlgCheck (2,"use enhanced metafile (EMF) format");
+DlgXvalue (3,"start: ");
+DlgXvalue (4,"end: ");
+DlgReal (5,"duration [s]: ", 0,1000);
+DlgReal (6,"overlap [s]: ", 0,1000);
+DlgCheck (7,"change directory to save files");
+name$:=fname$;
+dur:=30;
+overlap:=5;
+chk%:=1;
+cur2:=MaxTime();
+
+DlgShow (name$,chk%,cur1,cur2, dur, overlap,dir%); 'shows dialog and returns assignments
+
+if cur1=cur2 or cur1>cur2 then
+Message("invalid time window");
+halt
+endif
+
+if dir%=1 then
+ok2%:=FilePathSet("");
+endif
+if dir%=1 and ok2%<>0 then
+  halt
+endif
+
+'---------------------------------------------------------------------------------
+var ext$;
+
+'identifies if the output files should be WMF or EMF
+if chk%=1 then
+ext$:=".emf";
+else
+ext$:=".wmf";
+endif
+
+
+'---------------------------------------------------------------------------------
+var Nwindow, nWin%;
+
+Nwindow:=(cur2-cur1)/(dur+overlap);
+
+nWin%:=Round(Nwindow);
+if nWin%<Nwindow then
+nWin%:=nWin%+1;
+endif
+
+'---------------------------------------------------------------------------------
+		
+Fontset("arial", 18, 2);	'sets the font size and type to bold arial 14
+ChanNumbers(0);				'switches off the channel numbers
+YAxisMode(6);					'switches off y-axis units and small tick marks
+XAxisMode(4);					'sets x-axis to scale bar mode
+'---------------------------------------------------------------------------------
+var j%, count$,name2$,mem% ;
+
+for j% := 0 to nWin%-1 step 1 do 'loop through all trigger events
+mem%:=MemChan(5);					'creates a new buffer channel, event type
+'adds appropriate number of zeros to the trigger counter, so that the running number will always be 3 digits (_001, _010, _100)
+if j%+1<10 then
+count$:=Str$(j%+1);
+count$:="00"+count$;
+endif
+if j%+1<100 and j%+1>9 then
+count$:=Str$(j%+1);
+count$:="0"+count$;
+endif
+if j%+1>99 then
+count$:=Str$(j%+1);
+endif
+ChanTitle$(mem%,count$);	'sets the counter channel name to the running number
+ChanShow(mem%);				'sets counter channel to visible
+if (cur1+(j%+1)*dur+overlap)<MaxTime() then
+Draw(cur1+j%*dur, dur+overlap);	'draws time window around the trigger with duration and offset as specified
+else
+Draw(MaxTime()-dur-overlap,dur+overlap);
+endif
+name2$:=name$+"_"+count$+ext$;	'specifies metafile name
+FileSaveAs(name2$, 5);				'saves metafile
+ChanDelete(mem%, 0);				'deletes the buffer channel
+next		'goes to next step in the loop
+'---------------------------------------------------------------------------------
+
+YAxisMode(0);		'turns y-axis units back on
+XAxisMode(0);		'resets x-axis mode
+ChanNumbers(1);	'turns channel numbers back on
+Fontset("Times", 8, 0);	'resets font size and style
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+

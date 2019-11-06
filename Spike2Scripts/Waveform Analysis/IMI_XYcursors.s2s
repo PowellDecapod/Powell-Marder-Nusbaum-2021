@@ -1,0 +1,48 @@
+'IMI_XYcursors - drops cursors into an XY view IV plot of IMI. Drag the cursors to the
+'peak, baseline, and Vpeak. Values are returned into the log window.
+
+'Dirk Bucher, Jan 2013
+
+if ViewKind() <> 12 then		'checks if the associated window is an XY view...
+   Message("This isn't an XY view!");
+  	halt							'...if not, script is stopped
+endif
+
+
+var vh%;
+vh%:=view();
+
+var vcur%,basecur%, peakcur%;
+CursorDelete(-1);
+HCursorDelete(-1);
+vcur%:=CursorNew();
+basecur%:=HCursorNew(1);
+peakcur%:=HCursorNew(1);
+CursorLabel(4,vcur%,"peak voltage");
+HCursorLabel(4,basecur%,"baseline");
+HCursorLabel(4,peakcur%,"peak current");
+FrontView(vh%);
+
+var click%, volt, peakI, baseI, Iamp;
+click%:=Interact("Place Cursors",255,0,"DONE","CANCEL");
+
+if click%=2 then
+    halt
+endif
+
+if click%=1 then
+    volt:=Cursor(vcur%);
+    peakI:=HCursor(peakcur%);
+    baseI:=HCursor(basecur%);
+    Iamp:=peakI-baseI;
+    
+    Printlog("baseline I [nA], peak I [nA], I amp [nA], Vpeak [mV]\n");
+    PrintLog("%f,%f,%f,%f\n",baseI,peakI,Iamp,volt);
+endif
+
+FrontView(LogHandle());
+Window(0,50,50,100);
+
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+    

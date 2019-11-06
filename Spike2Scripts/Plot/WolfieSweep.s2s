@@ -1,0 +1,366 @@
+'This script is based upon Dirk Bucher's multisweep script, but comes with some enhancements
+
+'Dirk's description:
+
+'Script to plot multiple sweeps of waveform data with fixed delay and duration from a trigger. You need an event channel holding
+'trigger times and one or two waveform channels to process.
+'In the dialog, assign channels and define the sweep duration and a pretrigger time. A maximum of 256 sweeps can be plotted. You
+'will get an error message if your analysis window contains more than 256 trigger signals. Limit by setting cursor 1 and cursor 2.
+
+'Dirk Bucher, May 2002.
+
+'updated December 2002. Now the error messages are correct and there's no empty xy-plot created anymore if you cancel the script.
+
+'updated January 2004. Extended to a second (optional) channel. The xy view window name will now identify the channel. The time view,
+'both xyviews and the log window will be displayed in the front. The log window will display file name, channel names and number of sweeps.
+
+
+'NEW to this script:
+' Wolfgang Stein 2005 and 2006
+
+'no more 2 channel limit
+'user can decide whether to use Cursors or not
+
+
+' the 256 sweep limit is due to the limit of XY Plots in Spike2. As long as they don't get rid of this, there is no way to get around the 256 sweep limit
+
+
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	halt							'if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+
+var aa,ok%, cur1, cur2, title$, xy%;	'sets variable expressions	
+
+title$:= WindowTitle$();
+
+
+var fname$,fend$,yesno$,xaxisrange;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";		'gets the filename of the time view
+
+var nViews%, vlist%[100], counter%, counter$, n%, windummy$,limit;
+var zz,wavech2[20], ok2%,chanName2$,wintitle2$,foundmatch%;
+var i%,k%, wavechunk [1000000], timebase [1000000], npts%, dt;
+
+
+'Create the first dialog
+
+
+var ok1%, wavech[20], triggerch%, duration, offset, dummy[100000], trigger%, wintitle$, check, chanName$, units$, units2$,limit$;
+limit$:="limited";
+check:=1;
+DlgCreate ("multiple sweeps");														'dialog window
+DlgChan (1,"Trigger channel",10);
+'DlgChan (2,"Waveform channel",513);
+DlgReal (2,"sweep duration [ms]",0,50000);
+DlgReal (3,"pretrigger time [ms]",-50000,50000);
+DlgReal(4, "how many channels?",1,19);
+
+duration:=100;
+offset:=20;
+ok1% := DlgShow(triggerch%, duration, offset, check);
+
+
+if ok1%<>1 then 'check whether the dialog function worked. If not then stop!!
+	message("something went wrong - cannot continue");
+	FrontView (App (3));		'brings script to front...
+	halt
+else 'if everything is ok, then run main program
+
+
+	checktrig();  'now check whether user wants to use Cursors and whether we do not exceed the 256 sweep limit that spike2 burdens on us
+	
+	if limit$="limited" then  'if user decides to use less than 256 sweeps ->write every sweep seperately to the XY plot
+	
+		
+		'NOW LOOP. This loop determines the number of multisweep windows
+		
+		for zz:=1 to check do
+		
+			counter%:=0; 'reset counter. Counter is used for the window/multisweep name. If the same window name already exists, counter is increased by one, so that we get a new window name
+			nViews%:=Viewlist(vlist%[], 4096);
+			Frontview (ViewFind(title$)); 'bring recording to front
+			
+			'now create new dialog and let user select the next channel
+			DlgCreate ("select next channel");
+			DlgChan (1,"Waveform channel",513);
+			ok2%:=DlgShow(wavech[zz]);
+			chanName$:=ChanTitle$(wavech[zz]);
+		   units$:=ChanUnits$(wavech[zz]);
+		
+			'Now check whether the desired window name is already in use (so that we do not write the new sweeps to an existing window)
+			repeat
+				counter%:=counter%+1;
+			   counter$ := Str$(counter%);
+				wintitle$:="multisweep "+counter$+" of "+chanName$;
+			
+				' test whether the new wintitle$ is distinct
+				foundMatch% := 0;  ' this is a boolean
+				n% := 1;
+				while n% <= nViews% and not foundMatch% do
+				  	Frontview (vlist%[n%]);
+					windummy$:=WindowTitle$();
+				   if windummy$=wintitle$ then
+				      foundMatch% := 1;
+				   endif;
+				   n% := n%+1;
+				wend;
+			   ' if we get here and we found a match, we need to loop
+			until not foundMatch%;
+		
+			
+		
+			Frontview (ViewFind(title$)); 'bring recording to front
+			trigger%:=ChanData(triggerch%, dummy [], cur1, cur2); 'get number of trigger pints
+			
+			xy%:=FileNew(12);												'creates xy-view
+			Windowtitle$(wintitle$);	'and gives it a name
+			Frontview (ViewFind(title$));									'returns time recording to the front
+			
+			
+			dt:=BinSize(wavech[zz]);														'returns the sampling interval of the waveform channel
+		
+			'NOW add sweeps to XY plot
+			for i% := 0 to trigger%-1 step 1 do										'sweep loop
+			
+				npts%:=ChanData (wavech[zz], wavechunk[], dummy[i%]-(offset/1000), (dummy[i%]-(offset/1000))+(duration/1000));	'dumps voltage values for one sweep into an array
+			
+				for k% := 0 to npts%-1 step 1 do											'data point loop
+					timebase[k%]:= (k%*dt)-(offset/1000);									'generates an array with the appropriate time value for every data point
+				next
+				
+				FrontView(xy%);  ' brings xy-view to the front
+				if i% <> 0 then
+				  XYSetChan(0); 
+				endif
+				ArrMul(timebase[:npts%], 1000);
+				XYAddData((i%+1),timebase[:npts%],wavechunk[:npts%]);				'plots xy-values
+				XYDrawMode((i%+1),2,0);
+				XYColour((i%+1),0);		
+				XYJoin((i%+1),1);
+				FrontView (ViewFind(title$));
+			
+			next
+			
+			'Optimise the XY view
+			FrontView(xy%);
+			XRange(offset*-1,offset*-1+duration);
+			Optimise(-1);
+			Xtitle$("time");
+			XUnits$("ms");
+			ChanTitle$(0,chanName$);
+			ChanUnits$(0, units$);
+			Draw();
+			WindowSize(50,50);
+			Window(50,zz*5); 'set the position of the XY plot to a different y-position (5 x its number)
+				
+			
+			Frontview (ViewFind(title$));
+			WindowSize(50,80);
+			Window(0,0);
+		
+			'Bring LOgfile up 
+			Frontview (LogHandle ());
+			Windowsize(50,20);
+			Window(0,80);
+			
+			'write data to logfile
+			PrintLog("DATAFILE: ",fname$);
+			FrontView (ViewFind(title$));
+			PrintLog("CHANNEL ",zz," : ", ChanTitle$(wavech[zz]));
+			Printlog("TRIGGER: ",ChanTitle$(triggerch%));
+			Printlog("START= ",cur1,"  /  ","END= ",cur2);
+			PrintLog ("# OF SWEEPS: ", i%);
+			PrintLog("\n");	'new line
+	
+			'RESET ARRAYS
+			ARRConst(wavechunk[],0);
+			ARRConst(timebase[],0);
+			ARRConst(dummy[],0);
+	
+		next;
+
+	else 'if limit$<>"limited" -> user decided to use more than 256 sweeps -> all sweeps are written to same channel (sweep). That works around the 256 sweep limit of Spike2
+	
+	
+	
+	'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX In this part of the prg, all data points are written to the same channel in the XY plot.
+	' XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX this gets around the 256 sweep limit of spike 2
+		
+		
+
+		
+		'NOW LOOP. This loop determines the number of multisweep windows
+		
+		for zz:=1 to check do
+		
+			counter%:=0; 'reset counter. Counter is used for the window/multisweep name. If the same window name already exists, counter is increased by one, so that we get a new window name
+			nViews%:=Viewlist(vlist%[], 4096);
+			Frontview (ViewFind(title$)); 'bring recording to front
+			
+			'now create new dialog and let user select the next channel
+			DlgCreate ("select next channel");
+			DlgChan (1,"Waveform channel",513);
+			ok2%:=DlgShow(wavech[zz]);
+			chanName$:=ChanTitle$(wavech[zz]);
+		   units$:=ChanUnits$(wavech[zz]);
+		
+			'Now check whether the desired window name is already in use (so that we do not write the new sweeps to an existing window)
+			repeat
+				counter%:=counter%+1;
+			   counter$ := Str$(counter%);
+				wintitle$:="multisweep "+counter$+" of "+chanName$;
+			
+				' test whether the new wintitle$ is distinct
+				foundMatch% := 0;  ' this is a boolean
+				n% := 1;
+				while n% <= nViews% and not foundMatch% do
+				  	Frontview (vlist%[n%]);
+					windummy$:=WindowTitle$();
+				   if windummy$=wintitle$ then
+				      foundMatch% := 1;
+				   endif;
+				   n% := n%+1;
+				wend;
+			   ' if we get here and we found a match, we need to loop
+			until not foundMatch%;
+		
+			
+		
+			Frontview (ViewFind(title$)); 'bring recording to front
+			trigger%:=ChanData(triggerch%, dummy [], cur1, cur2); 'get number of trigger pints
+			
+			xy%:=FileNew(12);												'creates xy-view
+			Windowtitle$(wintitle$);	'and gives it a name
+			Frontview (ViewFind(title$));									'returns time recording to the front
+			
+			
+			dt:=BinSize(wavech[zz]);														'returns the sampling interval of the waveform channel
+		
+			'NOW add sweeps to XY plot
+			for i% := 0 to trigger%-1 step 1 do										'sweep loop
+			
+				npts%:=ChanData (wavech[zz], wavechunk[], dummy[i%]-(offset/1000), (dummy[i%]-(offset/1000))+(duration/1000));	'dumps voltage values for one sweep into an array
+	
+	'SET first and last DATA point to +5Volt (just for the plot, since spike2 ALWAYS connects the last and the first data point in an XY View)
+				wavechunk[0]:=5;
+				wavechunk[npts%-1]:=5;
+	
+	
+				for k% := 0 to npts%-1 step 1 do											'data point loop
+					timebase[k%]:= (k%*dt)-(offset/1000);									'generates an array with the appropriate time value for every data point
+				next
+				
+				FrontView(xy%);  ' brings xy-view to the front
+				if i% <> 0 then
+				  XYSetChan(0); 
+				endif
+	
+				'THE SAME CHANNEL IS USED TO PLOT ALL DATA!!!!! DATA IS NOT STORED IN SEPARATE SWEEPSSSSS
+	
+				ArrMul(timebase[:npts%], 1000);
+				XYAddData(1,timebase[:npts%],wavechunk[:npts%]);				'plots xy-values
+	
+				
+				XYDrawMode(1,2,0);
+				XYColour(1,0);		
+				XYJoin(1,1);
+				FrontView (ViewFind(title$));
+			
+			next
+			
+			'Optimise the XY view
+			FrontView(xy%);
+			XRange(offset*-1,offset*-1+duration);
+			Optimise(1,(offset*-1)+1,duration-offset-3); 'OPTIMISE without the borders, which were set to 5Volts!!
+			Xtitle$("time");
+			XUnits$("ms");
+			ChanTitle$(0,chanName$);
+			ChanUnits$(0, units$);
+			Draw();
+			WindowSize(50,50);
+			Window(50,zz*5); 'set the position of the XY plot to a different y-position (5 x its number)
+				
+			
+			Frontview (ViewFind(title$));
+			WindowSize(50,80);
+			Window(0,0);
+		
+			'Bring LOgfile up 
+			Frontview (LogHandle ());
+			Windowsize(50,20);
+			Window(0,80);
+			
+			'write data to logfile
+			PrintLog("DATAFILE: ",fname$);
+			FrontView (ViewFind(title$));
+			PrintLog("CHANNEL ",zz," : ", ChanTitle$(wavech[zz]));
+			Printlog("TRIGGER: ",ChanTitle$(triggerch%));
+			Printlog("START= ",cur1,"  /  ","END= ",cur2);
+			PrintLog ("# OF SWEEPS: ", i%);
+			PrintLog("\n");	'new line
+	
+			'RESET ARRAYS
+			ARRConst(wavechunk[],0);
+			ARRConst(timebase[],0);
+			ARRConst(dummy[],0);
+	
+		next;
+	endif;
+
+endif; 'this is the end of the main loop (if the first dialog was ok!)
+
+halt; 'end of prg
+   
+
+proc checktrig()
+yesno$:=input$("Do you want to use Cursors to select a time range? (y/n)","y",1);     ' whether (new) cursors should be used
+if yesno$ = "n" then 
+		cur1:=0;
+		cur2:=MaxTime();
+	
+	else
+		xaxisrange:=xhigh()-xLow();
+		xaxisrange:=xaxisrange/3;
+	
+		if Cursor (1)=-1 then 'check if Cursors are there and if not ask user
+        Cursornew(xlow()+xaxisrange,1);
+		endif;
+
+		if Cursor (2)=-1 then
+			Cursornew(xhigh()-xaxisrange,2);
+		endif;
+		
+		Cursorrenumber();
+
+		interact("Please set Cursors for time range to analyze",1023);
+
+		cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+		cur2 := Cursor(2);
+
+endif; 
+
+aa:=Count(triggerch%,cur1, cur2);
+if aa>256 then
+	limit:=Query("more than 256 trigger points| >256 trigger points. Plot them in a single sweep or (re-)use Cursors?","Continue and plot","Use Cursors");
+	if limit=1 then
+		limit$:="unlimited";
+	else
+	checktrig();
+	endif;
+endif;
+
+'FIX optimise
+
+end;
+
+
+
+
+

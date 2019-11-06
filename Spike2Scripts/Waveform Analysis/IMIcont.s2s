@@ -1,0 +1,222 @@
+'IMI continuous
+'Script to get IV plots of the modulator activated inward current from continuous voltage clamp ramps during peptide application.
+'The purpose is to test how much rundown there is and to be able to pick the largest response for further analysis (with "rampIV" script).
+'You need to first make an event or marker channel that marks the cycles. Cursors are created that let you define the time range from
+'which to average a control current response, the time range for the current response after applying a peptide, and the time/voltage
+'range in a single ramp that you want to actually use for the plots. Then an XY view is created that holds the difference IV plots
+'for every ramp cycle in the presence of the peptide. Cursors are created to mark the voltage range in which to look for the peak (trough)
+'current. The minumum value from each cycle is then plotted as a function of cycle number and a function of file time. Note that these are
+'the minimum values from each IV curve, so noisy plots will create problems.
+
+'Dirk Bucher, November 2012
+'update Dec 2012 - now also creates a text file with the peak current values
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+var Timevh%;
+Timevh%:=View();
+var fname$, fend$;
+fname$:=FileName$(3);
+fend$:=FileName$(4);
+fname$:=fname$+fend$;
+
+var ok%, cycleCh%,currentCh%,voltageCh%;
+
+DlgCreate("Select");
+DlgChan(1,"cycle marker",10);
+DlgChan(2,"current channel",1);
+DlgChan(3,"voltage channel",1);
+ok%:=DlgShow(cycleCh%,currentCh%,voltageCh%);
+if ok%=0 then
+    halt
+endif
+
+
+CursorDelete(-1);
+CursorNew();
+CursorLabel(4,1,"cont ave start");
+CursorLabelPos(1,50);
+CursorNew();
+CursorLabel(4,2,"cont ave end");
+CursorLabelPos(2,50);
+CursorNew();
+CursorLabel(4,3,"response start");
+CursorLabelPos(3,50);
+CursorNew();
+CursorLabel(4,4,"response end");
+CursorLabelPos(4,50);
+CursorNew();
+CursorLabel(4,5,"ramp start");
+CursorLabelPos(5,50);
+CursorNew();
+CursorLabel(4,6,"ramp end");
+CursorLabelPos(6,50);
+
+var ok1%;
+
+ok1%:=Interact("Set Cursors",1023,0,"OK","Cancel");
+if ok1%=2 then
+    halt
+endif
+
+if Cursor(2)<Cursor(1)
+    or Cursor(4)<Cursor(3)
+    or Cursor(6)<Cursor(5) then
+    Message("Cursors are not in appropriate order");
+    halt
+endif
+
+
+var nextEvent, lastEvent, closestEvent, nextDiff,lastDiff, rampstartdel, rampenddel;
+
+nextEvent:=NextTime(cycleCh%,Cursor(5));
+nextDiff:=Abs(Cursor(5)-nextEvent);
+lastEvent:=LastTime(cycleCh%,Cursor(5));
+lastDiff:=Abs(Cursor(5)-lastEvent);
+if lastDiff<nextDiff then
+    closestEvent:=lastEvent;
+else
+    closestEvent:=nextEvent;
+endif
+rampstartdel:=Cursor(5)-closestEvent;
+rampenddel:=Cursor(6)-closestEvent;
+
+var nContcycle%,contcycle[200],k%;
+
+nContcycle%:=ChanData(cycleCh%,contcycle[],Cursor(1),Cursor(2));
+
+var contVoltage[200000], contCurrent[200000], contVAve[200000], contIAve[200000], nContVoltage%, nContCurrent%;
+
+for k%:=0 to nContcycle%-1 step 1 do
+    nContVoltage%:=ChanData(voltageCh%,contVoltage[],contcycle[k%]+rampstartdel, contcycle[k%]+rampenddel);
+    ArrAdd(contVAve[:nContVoltage%-1],contVoltage[:nContVoltage%-1]);
+    nContCurrent%:=ChanData(currentCh%,contCurrent[],contcycle[k%]+rampstartdel, contcycle[k%]+rampenddel);
+    ArrAdd(contIAve[:nContCurrent%-1],contCurrent[:nContCurrent%-1]);
+next
+ArrDiv(contVAve[:nContVoltage%-1],nContcycle%);
+ArrDiv(contIAve[:nContCurrent%-1],nContcycle%);
+
+var nRespCycle%,respCycle[200], j%, XYhandle%;
+
+nRespCycle%:=ChanData(cycleCh%,respCycle[],Cursor(3), Cursor(4));
+
+XYhandle%:=FileNew(12);
+WindowTitle$(fname$+"_IVplots");
+XTitle$("Vm");
+XUnits$("mV");
+ChanTitle$(0,"I");
+ChanUnits$(0,"nA");
+
+var respCurrent[200000];
+
+for j%:=0 to nRespCycle%-1 step 1 do
+    FrontView(Timevh%);    
+    ChanData(currentCh%,respCurrent[],respCycle[j%]+rampstartdel, respCycle[j%]+rampenddel);
+    ArrSub(respCurrent[:nContVoltage%-1],contIAve[:nContVoltage%-1]);
+    FrontView(XYhandle%);
+    XYAddData(j%+1,contVAve[:nContVoltage%-1], respCurrent[:nContVoltage%-1]);
+    XYSetChan(0);
+next
+
+CursorNew();
+CursorLabel(4,1,"start");
+CursorNew();
+CursorLabel(4,2,"end");
+
+var ok2%, i%;
+
+ok2%:=Interact("Set Cursors",1023,0,"OK","Cancel");
+if ok2%=2 then
+    halt
+endif
+
+
+var vlow, ilow, vhigh, ihigh,npts%,list%[1000000];
+var x[200000],y[200000], XY2handle%, XY3handle%;
+XY2handle%:=FileNew(12);
+XTitle$("time");
+XUnits$("s");
+ChanTitle$(0,"I max");
+ChanUnits$(0,"nA");
+WindowTitle$(fname$+"_Imax_time");
+XY3handle%:=FileNew(12);
+XTitle$("cycles");
+XUnits$("#");
+ChanTitle$(0,"I max");
+ChanUnits$(0,"nA");
+WindowTitle$(fname$+"_Imax_cycles");
+
+for i%:=0 to nRespCycle%-1 step 1 do
+    
+    FrontView(XYhandle%);
+    XYRange(i%+1,vlow,ilow,vhigh, ihigh);
+    npts%:=XYInRect(i%+1,Cursor(1),ilow,Cursor(2),ihigh,list%[]);
+    XYGetData(i%+1,x[],y[],list%[0],list%[npts%-1]);
+    ArrSort(y[]);
+    FrontView(XY2handle%);
+    XYAddData(1,respCycle[i%],y[0]);
+    FrontView(XY3handle%);
+    XYAddData(1,i%+1,y[0]);
+    
+next
+
+FrontView(Timevh%);
+WindowSize(50,50);
+Window(0,50);
+
+var yval[1000], xval[1000], x2val[1000], xyval[1000][3],n%, dummy[1000];
+
+FrontView(XYhandle%);
+WindowSize(50,50);
+Window(0,0);
+
+FrontView(XY2handle%);
+XYRange(1,vlow,ilow,vhigh, ihigh);
+XRange(vlow, vhigh);
+WindowSize(50,33);
+Window(50,0);
+XYGetData(1, x2val[], dummy[]);
+
+FrontView(XY3handle%);
+XYRange(1,vlow,ilow,vhigh, ihigh);
+XRange(vlow, vhigh);
+WindowSize(50,33);
+Window(50,33);
+n%:=XYGetData(1, xval[], yval[]);
+
+FileNew(1,1);
+WindowTitle$(fname$+"_Imax");
+WindowSize(50,33);
+Window(50,66);
+ArrAdd(xyval[:n%][0],xval[:n%]);
+ArrAdd(xyval[:n%][1],x2val[:n%]);
+ArrAdd(xyval[:n%][2],yval[:n%]);
+Print("cycle, time, I[nA]\n");
+print(xyval[:n%][]);
+
+FrontView (App (3));		'bring script to the front...
+FileClose (0);				'...and close it
+
+
+    
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+

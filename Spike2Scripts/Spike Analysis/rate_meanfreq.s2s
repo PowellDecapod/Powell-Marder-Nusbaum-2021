@@ -1,0 +1,174 @@
+'Script to extract rates and mean frequencies from an event channel. You have to specify an event channel and
+'a bin size (must be smaller than the time window). Analysis window is between Cursor (1) and Cursor (2). If they
+'are not set correctly, you are asked if you want to analyze the whole file. Allows time correction.
+
+'Returns to the log window:
+
+'	- bin#						- Trailing number of bin
+'	- Time [s]					- Time of the bin start point (file time)
+'	- relTime [s]				- Corrected time of the bin start point
+'	- binsize [s]				- Real bin size. This is different for the last bin if the analysis window divided by bin size is not an integer.
+'	- nSpikes					- Number of events found in each bin. Mind the possible difference in bin size for the last bin!
+'	- meanFreq [Hz]\n"		- nSpikes/binsize.
+
+
+'Dirk Bucher, November 2002
+
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%,ok1%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var spkch%, corrT%, Tadd, dummyT;
+var i%;	'counter
+var nSpikes%, spktime[100000], bin, freq;
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";		'gets the filename of the time view
+
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgChan (1,"spikechannel", 2);
+DlgReal (2, "bin size [s]:", 0.00001, 72000);
+DlgText ("Optional:",2,3);
+DlgCheck (3, "Relative time correction", 2, 4);	'creates a checkbox for optional correction of relative time codes
+		'creates a checkbox for optional correction of burst numbers
+bin:=10;
+ok%:= DlgShow (spkch%,bin, corrT%); 'shows dialog and returns assignments
+
+if bin<0.01 then 
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Bin size is below 10 ms! Proceed anyway?",2,1);								'...choose if you want to analyse the whole file
+	ok1%:=DlgShow ();
+
+	if ok1%=0 then																	'sets analysis to whole file or...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+endif
+
+
+if (cur2-cur1)/bin<1 then
+
+message ("bin size exceeds analysis window");
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+
+if spkch%<1 then		'checks if event channel (for spikes) and marker channels (for bursts)
+	Message ("No valid channel assignment!");					'are present. If not, or if "Cancel" is clicked,...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+if	corrT%=0 then				'identifies the case where the optional box isn't checked.
+	Tadd:= 0;					'sets time correction to subtracting cursor 1 value 
+	if cur1=0 then
+		Message ("No relative time correction!");
+	else
+		Message ("Time correction: Cursor (1) time set to zero");
+	endif
+else
+ 		DlgCreate ("Relative time and burst# correction"); 'creates dialog to assign correction values
+		DlgReal (1, "Add time [s]:", -72000, 72000);
+		dummyT:=1000; 'presets time correction to 1000s
+		DlgShow (dummyT);
+		if dummyT=0 then	'if cancel is clicked or time correction=0
+			Tadd:= 0;		'sets time correction to substracting cursor 1 value
+			
+			if cur1=0 then
+				Message ("No relative time correction!");
+			else
+				Message ("Cursor (1) time set to zero");
+			endif
+
+		else
+			Tadd:=dummyT;		'sets time correction to whatever was assigned 
+		endif
+
+endif
+
+
+
+PrintLog("DATAFILE= ",fname$,"  /  ","SPIKECHANNEL= " , ChanTitle$(spkch%),"  /  ","START= ",cur1,"  /  ","END=", cur2);
+'prints header to log window
+
+PrintLog("\n");	'new line
+
+PrintLog("bin#, Time [s], relTime [s], binsize [s], nSpikes, meanFreq [Hz]\n");
+'prints column titles to log window
+
+var DummynBin, nBin%, realbin;
+
+DummynBin:=(cur2-cur1)/bin;
+Round (DummynBin);
+if DummynBin>(cur2-cur1) then
+nBin%:=Dummynbin-1;
+else
+
+nBin%:=DummynBin;
+realBin:=bin;
+
+endif
+
+for i%:=0 to nBin% step 1 do
+
+nSpikes%:= ChanData (spkch%, spktime[], i%*bin, i%*bin+bin);
+
+if (i%+1)*bin>(cur2-cur1) then
+realBin:=(cur2-cur1)-i%*bin;
+else
+realBin:=bin;
+endif
+
+Printlog ("%3d,%f,%f,%f,%3d,%f\n", i%+1, i%*bin+cur1, i%*bin+Tadd, realBin, nSpikes%, nSpikes%/realBin);
+
+
+next
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+

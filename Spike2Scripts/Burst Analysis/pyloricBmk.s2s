@@ -1,0 +1,192 @@
+'"pyloric burstmake"
+
+'script to detect PD, LP and PY spikes and bursts. It will drop horizontal cursors into the visible waveform channels. The Hcursors are labeled "PD", "LP", and "PY".
+'Drag them to the appropriate channel and use them to set the threshold for spike detection. The script automatically does either "data rising through level" or "data
+'"falling through level", dependent on the sign of the voltage. Burst detection is done automatically (0.3, 0.3, 3 for 1st interval, interval, minimum # of spikes). New
+'channels are named "PDspikes, PDbursts, ..." and will be read in automatically when you subsequently use the "pyloricPhase" script.
+
+'Dirk Bucher, January 2005
+
+'---------------------------------------------------------------------------------------------------------------------------
+if ViewKind() <> 0 then		'checks if the associated window is a time view. If not, ...
+   Message("This isn't a time view!");
+  	FrontView (App (3));			'brings script to the front...
+	FileClose (0);					'...and closes it
+endif
+'---------------------------------------------------------------------------------------------------------------------------
+WindowVisible (3);		'sets the time view to the front
+'---------------------------------------------------------------------------------------------------------------------------
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)/Cursor (1)<1 or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));			'brings script to the front...
+	FileClose (0);					'...and closes it
+	endif
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'---------------------------------------------------------------------------------------------------------------------------
+var chList%[20], yH, yL;
+
+ChanList(chList%[], 2049); 'gets a list of all visible waveform channels
+'---------------------------------------------------------------------------------------------------------------------------
+
+HCursorDelete(-1); 'deletes all present Hcursors
+'---------------------------------------------------------------------------------------------------------------------------
+
+if chList%[0]<1 then 'if there is no waveform channel visible...
+
+message("No waveform channels visible");
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+
+endif
+
+if chList%[0]>2 then 'if there are more than 2 waveform channels visible...
+
+HCursorNew(chList%[1]); 'put new Hcursors in the first three visible channels
+HCursorNew(chList%[2]);
+HCursorNew(chList%[3]);
+
+endif
+
+if chList%[0]=1 or chList%[0]=2 then 'if there are only one or two waveform channels...
+yH:=YHigh(chList%[1]); 'get y-axis maximum from first visible channel
+yL:=YLow(chList%[1]);  'get y-axis minimum from first visible channel
+HCursorNew(chList%[1]); 'put first Hcursor in first channel (will be in the middle)
+HCursorNew(chList%[1], yL+(yH-yL)*0.9); 'put second Hcursor in the upper region
+HCursorNew(chList%[1], yL+(yH-yL)*0.1); 'put thrid Hcursor in the lower region
+endif
+'---------------------------------------------------------------------------------------------------------------------------
+
+HCursorLabel(4,1,"PD"); 'set label strings for the cursors
+HCursorLabel(4,2,"LP");
+HCursorLabel(4,3,"PY");
+Fontset("arial", 14, 2); 'set font to bold arial 14
+
+Interact("set Hcursors", 384,0,"OK"); 'let user interact to place the cursors
+
+Fontset("Times", 8, 0); 'reset font to plain times 8
+'---------------------------------------------------------------------------------------------------------------------------
+
+var PDlevel, LPlevel, PYlevel, PDch%, LPch%, PYch%;
+
+PDlevel:=HCursor(1); 'get Hcursor voltage values
+PDch%:=HCursorChan(1); 'get channel numbers for the Hcursors
+LPlevel:=HCursor(2);
+LPch%:=HCursorChan(2);
+PYlevel:=HCursor(3);
+PYch%:=HCursorChan(3);
+'---------------------------------------------------------------------------------------------------------------------------
+
+var mem%, mode%, PDspk%, LPspk%, PYspk%;
+
+mem%:=MemChan(2);					'creates a new buffer channel, event type
+
+if PDlevel<0 then					'set mode variable for the MemImport function below to either
+mode%:=3;							'"rising" or "falling", dependent on the sign of the voltage value
+else
+mode%:=2;
+endif
+
+MemImport(mem%, PDch%, cur1, cur2 ,mode% , 0.001, PDlevel);	'imports the events to the buffer channel
+PDspk%:=ChanNew(0, 2);			'creates new real channel
+MemSave(mem%,PDspk%, 0, 1);	'saves buffer channel to a real channel
+ChanDelete(mem%, 0);				'deletes the buffer channel
+ChanShow(PDspk%);				'shows new channel
+ChanTitle$(PDspk%,"PDspikes");		'names new channel
+DrawMode(PDspk%,2);				'sets channel draw mode to "lines"
+
+var memch%, PDburst%;
+
+memch%:=MemChan(5); 'new buffer channel is created (marker type)
+PDburst%:=ChanNew(0,5);'creates new real channel
+BurstMake(memch%,PDspk%,cur1,cur2,0.3, 0.3, 3);		'this is the actual marking of the bursts, using the assigned parameters
+MemSave(memch%,PDburst%, 0, 1);	'save the buffer channel to a real channel (type: marker (5)) and query to overwrite, when already present
+ChanDelete(memch%, 0);				'delete the buffer channel; 
+ChanShow(PDburst%); 				'show the new marker channel in the time view
+ChanTitle$(PDburst%,"PDbursts");		'name it
+'---------------------------------------------------------------------------------------------------------------------------
+'do the same for LP
+mem%:=MemChan(2);				
+
+if LPlevel<0 then
+mode%:=3;
+else
+mode%:=2;
+endif
+
+MemImport(mem%, LPch%, cur1, cur2 ,mode% , 0.001, LPlevel);	
+LPspk%:=ChanNew(0, 2);
+MemSave(mem%,LPspk%, 0, 1);	
+ChanDelete(mem%, 0);			
+ChanShow(LPspk%);			
+ChanTitle$(LPspk%,"LPspikes");	
+DrawMode(LPspk%,2);			
+
+var LPburst%;
+
+memch%:=MemChan(5); 
+LPburst%:=ChanNew(0,5);
+BurstMake(memch%,LPspk%,cur1,cur2,0.3, 0.3, 3);	
+MemSave(memch%,LPburst%, 0, 1);	
+ChanDelete(memch%, 0);			
+ChanShow(LPburst%); 				
+ChanTitle$(LPburst%,"LPbursts");		
+'---------------------------------------------------------------------------------------------------------------------------
+'do the same for PY
+
+mem%:=MemChan(2);					
+
+if PYlevel<0 then
+mode%:=3;
+else
+mode%:=2;
+endif
+
+MemImport(mem%, PYch%, cur1, cur2 ,mode% , 0.001, PYlevel);	
+
+if PYch%=LPch% then  'if LP and PY are supposed to be detected from the same waveform channel...
+
+var nlrg%,i%, lrgspk[100000];
+
+nlrg%:=ChanData(LPspk%,lrgspk[],cur1,cur2); 'get LP spike times and total number
+
+for i% := 0 to nlrg%-1 step 1 do 'step through LP spikes
+MemDeleteTime(mem%,0,lrgspk[i%],0.002); 'delete every LP spike from the PYspikes buffer channel
+next;
+endif
+
+PYspk%:=ChanNew(0, 2);
+MemSave(mem%,PYspk%, 0, 1);	
+ChanDelete(mem%, 0);				
+ChanShow(PYspk%);				
+ChanTitle$(PYspk%,"PYspikes");		
+DrawMode(PYspk%,2);				
+
+var PYburst%;
+
+memch%:=MemChan(5); 
+PYburst%:=ChanNew(0,5);
+BurstMake(memch%,PYspk%,cur1,cur2,0.3, 0.3, 3);		
+MemSave(memch%,PYburst%, 0, 1);	
+ChanDelete(memch%, 0);				
+ChanShow(PYburst%); 				
+ChanTitle$(PYburst%,"PYbursts");	
+'---------------------------------------------------------------------------------------------------------------------------
+
+HCursorDelete(-1);			'delete all Hcursors
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+

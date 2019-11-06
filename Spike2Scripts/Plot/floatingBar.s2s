@@ -1,0 +1,98 @@
+''**** Script to plot phase diagram.   W. Stein 2009
+
+'slightly edited by Dirk Bucher July 2009.
+'labels are now Arial 24pt.
+'dialog now asks for "phase/time" and "error" to make it more general.
+'now takes any values from -10000 to +10000, so you can do this in time as milliseconds.
+'xy key displays neuron names only once now, but i don't know how to get rid of the lines. 
+
+
+var phaseon,phaseoff,stdON,stdOFF,name$,phaseplot,neuronnumber,channelnumber,janein;
+
+'*** initialize some values
+phaseon:=0;
+phaseoff:=.4;
+stdOFF:=0.05;
+stdON:=0;
+name$:="PD";
+
+'****
+
+
+phaseplot:=filenew(12,1); 'open XY plot
+Fontset("arial", 24, 2);
+
+'******** we will have three channels per neuron, one for box and one for each standard deviation
+'******** this is so that we can use coreldraw to fill colors into the box (the box has to be a distinct channel for that)
+    XYSetChan(0); 'create channel 2
+    XYSetChan(0); 'create channel 3
+
+neuronnumber:=input("how many neurons?",3); 'get number of neurons
+
+for channelnumber:=2 to neuronnumber do 'make channels
+    XYSetChan(0); 'create new channel 1
+    XYSetChan(0); 'create new channel 2
+    XYSetChan(0); 'create new channel 3
+    ChanShow(-1); 'show them
+    next;
+
+XYDrawMode(-1,1,0); 'set drawmode to joined without dots
+XYDrawMode(-1,2,0);
+XYDrawMode(-1,3,0);
+XYDrawMode(-1,4,2);
+
+
+for channelnumber:=1 to neuronnumber*3 step 3 do 'iterate phase data , 3 channels per neuron
+
+DlgCreate("floating bar chart");
+DlgString(1,"Name of Neuron",255);
+DlgReal(2,"On time/phase",-10000,10000);
+DlgReal(3,"On error",-10000,10000);
+DlgReal(4,"Off time/phase",-10000,10000);
+DlgReal(5,"Off error",-10000,10000);
+DlgShow(name$,phaseon,stdon,phaseoff,stdOFF);
+    
+    '*** set positions of edges for boxes and Std Dev. First neuron on top, last on bottom, range depends on number of neurons
+    XYAddData(channelnumber+1,phaseon-stdon,neuronnumber-channelnumber/3+0.7);    'we have to devide  channelnumber by 3 on the y-axis because we have 3 channels
+    XYAddData(channelnumber+1,phaseon-stdon,neuronnumber-channelnumber/3+0.3);
+    XYAddData(channelnumber+1,phaseon-stdon,neuronnumber-channelnumber/3+0.5);
+    XYAddData(channelnumber+1,phaseon,neuronnumber-channelnumber/3+0.5);
+    
+    XYAddData(channelnumber,phaseon,neuronnumber-channelnumber/3+0.2);
+    XYAddData(channelnumber,phaseoff,neuronnumber-channelnumber/3+0.2);
+    XYAddData(channelnumber,phaseoff,neuronnumber-channelnumber/3+0.8);
+    XYAddData(channelnumber,phaseon,neuronnumber-channelnumber/3+0.8);
+    XYAddData(channelnumber,phaseon,neuronnumber-channelnumber/3+0.2);
+    XYAddData(channelnumber,phaseoff,neuronnumber-channelnumber/3+0.2);
+    
+    XYAddData(channelnumber+2,phaseoff,neuronnumber-channelnumber/3+0.5);
+    XYAddData(channelnumber+2,phaseoff+stdoff,neuronnumber-channelnumber/3+0.5);  
+    XYAddData(channelnumber+2,phaseoff+stdoff,neuronnumber-channelnumber/3+0.3);  
+    XYAddData(channelnumber+2,phaseoff+stdoff,neuronnumber-channelnumber/3+0.7);   
+    
+    XYJoin(channelnumber,1); 'join edges by line
+    XYJoin(channelnumber+1,1); 'join edges by line
+    XYJoin(channelnumber+2,1); 'join edges by line
+    ChanTitle$(channelnumber,name$); 'give a name to channel
+         ChanTitle$(channelnumber+1,"onset: "+STR$(phaseon)+"+/-"+STR$(stdon)); 'give a name to channel
+        ChanTitle$(channelnumber+2,"off: "+STR$(phaseoff)+"+/-"+STR$(stdOFF)); 'give a name to channel
+
+    next;
+YRange(-1,0,channelnumber/3+1); 'set y axis range
+YAxisMode(31); 'and remove y axis
+XAxisMode(7); 'remove small ticks on x axins and x axis name
+
+DlgCreate("box with names",0,0,0,2); 'ask if names of neuron should be given
+DlgButton(1,"create box with neuron names");
+DlgButton(0,"skip");
+
+janein:=DlgShow();
+
+if janein=1 then 
+XYKey(1,1); 'create box that contains names of the channels
+XYKey(3,0);
+XYKey(4,5);
+    xykey(5,50); 'and place it in the middle
+   XYKey(4,50);
+    Message("you can move the box with the mouse");
+endif;

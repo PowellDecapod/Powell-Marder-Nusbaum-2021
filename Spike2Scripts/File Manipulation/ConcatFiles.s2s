@@ -1,0 +1,122 @@
+'"ConcatFiles" - concatenate consecutive files
+
+'Script to create a new file that holds waveform data from two consecutive files. Only waveform channels are used. A dialog opens that lets you specify
+'two source files. The result file is saved in the same directory. For now, it only works if the 2 files have the same number of channels and the same channel numbers.
+'WARNING! The array size in spike 2 is limited (may depend on the system). Making huge arrays also slows down the execution. Therefore, you should calculate how many
+'data points per channel you have in total. If you use converted Axon files, the sampling rate for all channels will be the same. Otherwise use the channel sampled with
+'the highest frequency. If you scroll down this script for about 40 lines, you see the following line (enclosed by exclamation points):
+
+'!!!!!!!!!!!!!!!!!!!!!
+'var first[13000000],second[7000000], nData%, nData2%, nBoth%, tstep, mch%, scale, name$, units$;
+'!!!!!!!!!!!!!!!!!!!!!
+
+'The number in square brackets for "first" and "second" defines the array size for the arrays that will hold the voltage values of a channel in the first and second file.
+'Here is what to do using an example:
+'Check what the sampling rates are. If you have two 10 minute files where the largest channel has been sampled at 10 kHz, that channel will hold 6,000,000 data points
+'in each file. These data points will be passed into the arrays "first[]" and "second[]". "second[]" will only hold the data points for the channel in the second file,
+'but "first[]" will eventually end up holding the data points from both files, so it has to be able to hold the added number of data points (12 million in the example case).
+'You should make the arrays a little bigger than that (which is why 13 million and 7 million are used here). If you make the arrays to small, the script will give you an error
+'message in the toolbar saying "illegal subarray range" at the line where the data is actually passed into the array. If you make them too large you will get an error message
+'saying "not enough memory to create array".
+
+'Dirk Bucher, July 2005
+
+'Updated for files with different sampling rates in different channels
+'Also works now for channels that may have no data in the end or beginning of a file.
+'Dirk Bucher, Dec 2007
+
+var vh1%;
+vh1%:=FileOpen("",0,1);
+if vh1%<1 then
+	FrontView (App (3));'brings script to the front...
+	FileClose (App (3));'...and closes it
+endif
+
+var fname$,fend$, filetime1, upt;
+'get the file name of the 1st file
+fname$:=FileName$(3);
+fend$:=FileName$(4);
+filetime1:=MaxTime();
+upt:=FileTimeBase();
+
+var nChan%,chanlist%[20];
+nChan%:=ChanList(chanlist%[],1);
+
+var vh2%;
+vh2%:=FileOpen("",0,1);
+if vh2%<1 then
+	FrontView (App (3));'brings script to the front...
+	FileClose (App (3));'...and closes it
+endif
+
+var fname2$,fend2$, fnameNew$, vhNew%,filetime2;
+'get the file name of the 2nd file
+fname2$:=FileName$(3);
+fend2$:=FileName$(4);
+fnameNew$:=fname$+fend$+"_"+fend2$+".smr";
+filetime2:=MaxTime();
+var nChan2%,chanlist2%[20];
+nChan2%:=ChanList(chanlist2%[],1);
+var maxT;
+
+
+maxT:=filetime1+filetime2;
+
+vhNew%:=FileNew(7,1,upt,1,maxT);
+
+var j%;
+for j% := 1 to nChan% step 1 do
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    var first[25000000],second[14000000], nData%, nData2%, nBoth%, tstep, mch%, scale, name$, units$;
+    var firstT, firstBin%, LastT, lastBin%, firstT2, firstBin2%;
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    '!!!!!!!!!!!!!!
+    View(vh1%);
+    firstT:=NextTime(chanlist%[j%],0);
+    LastT:=LastTime(chanlist%[j%],MaxTime());  
+    tstep:=Binsize(chanlist%[j%]);
+    firstBin%:=firstT/tstep;
+    lastBin%:=lastT/tstep;
+    nData%:=Chandata(chanlist%[j%],first[firstBin%:],0, MaxTime()); 
+    lastBin%:=lastBin%-firstBin%-nData%;
+    scale:=ChanScale(chanlist%[j%]);
+    name$:=ChanTitle$(chanlist%[j%]);
+    units$:=ChanUnits$(chanlist%[j%]);
+    
+    View(vh2%);
+    firstT2:=NextTime(chanlist%[j%],0);
+    firstBin2%:=firstT2/tstep;
+    nData2%:=Chandata(chanlist2%[j%],second[firstBin2%:],0, MaxTime());
+  
+    ArrAdd(first[nData%+firstBin%+lastBin%+firstBin2%:nData2%],second[:nData2%+firstBin2%]);
+    nBoth%:=nData%+nData2%+firstBin%+firstBin2%+lastBin%;
+    
+    View(vhNew%);
+    mch%:=MemChan(1,0,tstep);
+    ChanScale(mch% ,scale);
+    MemSetItem(mch%, 0, 0, first[:nBoth%]);
+    MemSave(mch%,chanlist%[j%]);	'saves buffer channel to a real channel
+	ChanDelete(mch%, 0);				'deletes the buffer channel
+	ChanShow(chanlist%[j%]);					'shows new channel
+	ChanTitle$(chanlist%[j%],name$);		'names new channel
+	ChanUnits$(chanlist%[j%],units$);
+	DrawMode (chanlist%[j%], 2);
+
+	ChanShow(chanlist%[j%]);					'shows new channel
+	Optimise(chanlist%[j%]);					'optimise y-axis
+    ArrMul(first[],0);
+    ArrMul(second[],0);
+next
+
+FileSaveAs(fnameNew$);
+
+	FrontView (App (3));'brings script to the front...
+	FileClose (App (3));'...and closes it
+

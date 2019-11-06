@@ -1,0 +1,69 @@
+'SCRIPT TO WRITE EVENTS FROM A WAVEFORM CHANNEL TO AN EVENT CHANNEL.
+'this is equivalent to what can be done using the ANALYSIS menu. but is making things easier and faster. events are directly written to a
+'real channel (without having to write a buffer channel to an event channel) and the new channel can be named in the dialog.
+
+'Dirk Bucher, Jan 2002.
+
+'update Dirk Bucher, December 2002. Does not delete existing buffer channels anymore.
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+  	halt							'...if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (1) <> 0 and Cursor (2)/Cursor (1)<1 or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  		halt																		'stops the script
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var ok1%, input%, output%, name$, mode%, int, level;    'sets variables
+
+'mode%:=0|1|2|3; 'list for mode assignment		
+
+DlgCreate ("Waveform to Event");												'creates the dialog to assign channels, analysis mode
+DlgChan (1, "Import channel",529);												'(mark peaks, troughs, data rising or falling through a level).
+DlgChan (2, "New channel #",128);
+DlgString (3, "New channel name",15);
+DlgList (4,"Mode","Peaks|Troughs|Data rising through level|Data falling through level");
+DlgReal (5, "Minimum interval [s]", 0,1000);
+DlgReal (6, "Level [mV]", -3000,3000);
+	name$:="New events";							'presets
+	mode%:=0;
+	int:=0.001;
+
+ok1%:=DlgShow (input%, output%, name$, mode%, int, level);		'show the dialog
+
+if ok1%=1 then				'if "OK" was clicked...
+
+	var mem%;
+	mem%:=MemChan(2);					'creates a new buffer channel, event type
+	MemImport(mem%, input%, cur1, cur2 ,mode% , int, level);	'imports the events to the buffer channel, as specified in the dialog
+	MemSave(mem%,output%, 0, 0);	'saves buffer channel to a real channel
+	ChanDelete(mem%, 0);				'deletes the buffer channel
+	ChanShow(output%);				'shows new channel
+	ChanTitle$(output%,name$);		'names new channel
+	DrawMode(output%,2);				'sets channel draw mode to "lines"
+endif
+
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+
+

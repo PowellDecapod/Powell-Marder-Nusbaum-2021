@@ -1,0 +1,112 @@
+'"IVcurve"
+'script to return IV relationships from square commands. You need an event channel with the start times of the steps.
+'then you assign a command channel and a response channel (voltage and current, depending on if this was a voltage clamp
+'or a current clamp experiment) and 2 times (relative to the trigger event) when you want to make a measurement (if you need
+'only one, just ignore the second assignment).
+'Finally, you have to define a time window (relative to the trigger event) to average the baseline.
+'Returned are the following values:
+
+'Command (rounded to .1 precision)
+'Response1 			- absolute value of response @ time 1
+'deltaResponse1 	- value - baseline @ time 1
+'Response2 			- absolute value of response @ time 2
+'deltaResponse2 	- value - baseline @ time 2
+
+'Dirk Bucher, January 2004
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+'-----------------------------------------------------------------------------------------------------------------------
+
+var ok1%, trigch%, currch%, voltch%, measure1, measure2, t1, t2, t3, t4, nTrig%, trig [500], k%, baseStart, baseEnd;
+var voltage1, current, voltage2, current2, baseline, deltaVolt1, deltaVolt2;
+
+DlgCreate ("Assign channels");
+DlgChan (1, "Trigger channel: ", 10, 0, 1);
+DlgChan (2, "Response channel: ", 17, 0, 2);
+DlgChan (3, "Command channel: ", 17, 0, 3);
+DlgReal (4, "Measurement 1 [ms]", -10000, 100000, 0, 4);
+DlgReal (5, "Measurement 2 [ms]", -10000, 100000, 0, 5);
+DlgText ("Define a time window to average the baseline:", 1, 7);
+DlgReal (6, "Start after stimulus [ms]", -20000,20000, 0, 8);
+DlgReal (7, "End after stimulus [ms]", -20000,20000, 0, 9);
+DlgText ("", 1, 10);
+measure1:=500;
+measure2:=4000;
+baseStart:=-1050;
+baseEnd:=-50;
+
+ok1%:=DlgShow (trigch%, voltch%, currch%, measure1, measure2, baseStart, baseEnd);
+if ok1%=0 then
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+t1:=measure1/1000;
+t2:=measure2/1000;
+t3:=baseStart;
+t4:=baseEnd;
+
+Printlog ("%s,%s,%s,%s,%s\n", "Command ","response1 ","deltaResponse1","response2", "deltaResponse2");
+
+nTrig%:=ChanData(trigch%, trig [], cur1, cur2); 'put all burst starts into an array
+
+
+for k%:=0 to nTrig%-1 step 1 do
+
+voltage1:= ChanValue (voltch%, trig [k%] +t1);
+voltage2:= ChanValue (voltch%, trig [k%] +t2);
+current:= ChanValue (currch%, trig [k%] +t1);
+baseline:= ChanMeasure (voltch%, 2, trig [k%]+t3, trig [k%]+t4);
+deltaVolt1:= voltage1-baseline;
+deltaVolt2:= voltage2-baseline;
+
+PrintLog ("%.1f,%f,%f,%f,%f\n", current, voltage1, deltaVolt1, voltage2, deltaVolt2);
+
+next
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+FrontView (App (3));		'brings script to front...
+FileClose (0);			'...and closes it
+
+
+
+
+

@@ -1,0 +1,129 @@
+'artiCut. Script to cut out stimulus artifacts from a waveform channel and replace them with a linear interpolation.
+'You need an event channel that holds the stimulus times.
+
+'Dirk Bucher, Dec 2012
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var Timevh%;
+Timevh%:=View(); 'gets the view handle of the time view
+
+var waveCh%, stimCh%;
+DlgCreate("assign:");
+DlgChan(1,"waveform channel: ",1);
+DlgChan(2,"stim event channel: ", 6);
+ok%:=DlgShow(waveCh%, stimCh%);
+if ok%=0 then halt endif
+
+var lowT, highT;
+lowT:=XLow();
+highT:=XHigh();
+
+var first;
+
+first:=NextTime(stimCh%,cur1);
+XRange(first-0.002, first+0.004);
+
+var curStart%, curEnd%, startT, endT;
+curStart%:=CursorNew();
+CursorLabel(4,curStart%,"START");
+curEnd%:=CursorNew();
+CursorLabel(4,curEnd%,"END");
+
+var order%;
+order%:=0;
+while order%=0 do
+Interact("PLACE CURSOR TO MARK ARTIFACT DURATION",511,0,"OK");
+startT:=Cursor(curStart%);
+endT:=Cursor(curEnd%);
+    if endT>startT then
+        order%:=1;
+    else
+        Message("Cursors in wrong order. Try again.");
+    endif
+wend
+
+var relStart, relEnd, nT, lT;
+nT:=NextTime(stimCh%,startT);
+lT:=LastTime(stimCh%,startT);
+if nT>-1 and Abs(nT-startT)<Abs(lT-startT) then
+    
+    relStart:=startT-nT;
+    relEnd:=endT-nT;
+else
+    relStart:=startT-lT;
+    relEnd:=endT-lT;
+endif
+
+var memCh%;
+memCh%:=MemChan(0, waveCh%);
+MemImport(memCh%,waveCh%, 0, MaxTime());
+
+var nStims%,stims[100000],j%;
+nStims%:=ChanData(stimCh%,stims[],cur1,cur2);
+
+for j%:=0 to nStims%-1 step 1 do
+    MemDeleteTime(memCh%,3,stims[j%]+relStart, stims[j%]+relEnd);
+next
+
+ChanProcessAdd(memCh%,10,1,1);
+
+var outch%, chlist%[100], chTitle$, lowy, highy;
+ChanList(chlist%[],128);
+outch%:=chlist%[1];
+ChanSave(memCh%, outch%);
+ChanDelete(memCh%,0);
+ChanShow(outch%);
+chTitle$:=ChanTitle$(waveCh%);
+ChanTitle$(outch%,chTitle$);
+lowy:=YLow(waveCh%);
+highy:=YHigh(waveCh%);
+YRange(outch%,lowy,highy);
+XRange(lowT, highT);
+
+CursorDelete(curEnd%);
+CursorDelete(curStart%);
+
+FrontView (App (3));		'bring script to the front...
+FileClose (0);				'...and close it
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,120 @@
+'"Instantaneous frequency and interspike intervals"
+
+'script to dump inst freq  and ISIs to the log window. You need an event channel that holds the spike times.
+
+'Dirk Bucher and Ralph DiCaprio, September 2002
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+MoveTo(0, 1000000);
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";		'gets the filename of the time view
+
+var spkch%, corrT%, Tadd, dummyT;
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgChan (1,"spikechannel", 2);
+DlgText ("Optional:",2,3);
+DlgCheck (2, "Relative time correction", 2, 3);	'creates a checkbox for optional correction of relative time codes
+
+ok%:= DlgShow (spkch%, corrT%); 'shows dialog and returns assignments
+
+PrintLog("DATAFILE= ",fname$,"  /  ","SPIKECHANNEL= " , ChanTitle$(spkch%),"  /   ","START= ",cur1,"  /  ","END=", cur2);
+'prints header to log window
+
+PrintLog("\n");	'new line
+PrintLog ("Spiketime[s], corrSpiketime[s], ISI, instFreq\n");
+
+if spkch%<1 then		'checks if event channel (for spikes) and marker channels (for bursts)
+	Message ("No valid channel assignment!");					'are present. If not, or if "Cancel" is clicked,...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+if	corrT%=0 then				'identifies the case where no optional box was checked.
+	Tadd:= -cur1;					'sets time correction to substracting cursor 1 value 
+	if cur1=0 then
+		Message ("No relative time correction!");
+	else
+		Message ("Cursor (1) time substracted!");
+	endif
+else
+	if corrT%=1 then		'if only time correction was checked
+		DlgCreate ("Relative time and burst# correction"); 'creates dialog for only time correction
+		DlgReal (1, "Add time [s]:", -72000, 72000);
+		dummyT:=1000; 'presets time correction to 1000s
+		DlgShow (dummyT);
+			if dummyT=0 then	'if time correction returned 0 (or was canceled)
+				Tadd:= -cur1;	'sets time correction to default
+				if cur1=0 then
+					Message ("No relative time correction!");
+				else
+					Message ("Cursor (1) time substracted!");
+				endif
+			else
+				Tadd:=dummyT; 'sets time correction to whatever was assigned
+			endif
+endif
+endif
+
+var spktimes[500000],nspks%;
+var isi[500000],instf[500000];
+var xy%,i%;
+
+nspks%:=ChanData(spkch%,spktimes[],cur1,cur2);
+
+ArrAdd(isi[],spktimes[]);
+ 
+ArrDiff(isi[]);
+
+ArrAdd(instf[],isi[]);
+ArrDivR(instf[],1);
+
+for i% := 1 to nspks%-1 step 1 do
+PrintLog("%f,%f,%f,%f\n",spktimes[i%],spktimes[i%]+Tadd,isi[i%],instf[i%]);
+next;
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+

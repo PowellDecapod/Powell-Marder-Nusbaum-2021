@@ -1,0 +1,120 @@
+'"Edit Events"
+'Script to edit event or marker channels. Run the script from the script bar. A window pops up that lets you chose a marker or event channel to be edited.
+'In event channels, a cursor is created that can be moved to the time you want to edit. Click the buttons on the interaction bar to add or delete an event.
+'Click "Done" when you are finished editing. Events are added at the time of the cursor position. In delete mode, the closest event within 1s of the cursor
+'position is deleted.
+'In marker channels, the script will give you the option to add either "00" or "01" codes. Otherwise it works the same way as with events. This is intended
+'for marker channels created with "mkburst".
+
+'Dirk Bucher, 2007
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+  	halt							'...if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+
+
+var chan%, ok1%;
+
+DlgCreate ("Specify");
+DlgChan (1,"select channel", 10);
+ok1%:=DlgShow(chan%);
+
+if ok1%<>1 then
+halt
+else
+var cur%;
+    cur%:=CursorNew();
+    CursorLabel(4,cur%, "Edit");
+
+    var okAnalyze%, name$, mem%,gCodes%[4];
+    if chanKind (chan%)=5 then
+        repeat
+            okAnalyze%:=Interact("place cursor and choose edit mode", 1023,0,"Done", "Delete", "Add 01","Add 00");
+            if okAnalyze%=4 then
+                mem%:=MemChan(5);
+                MemImport(mem%, chan%, 0, MaxTime());
+                gCodes%[0]:=0;
+                gCodes%[1]:=0;
+                gCodes%[2]:=0;
+                gCodes%[3]:=0;
+                MemSetItem(mem%,0,Cursor(cur%),gCodes%[]);
+                name$:=ChanTitle$(chan%);
+                ChanDelete (chan%,0);
+                MemSave(mem%,chan%, 0, 0);
+                ChanDelete(mem%, 0);
+                ChanShow(chan%);
+                ChanTitle$(chan%,name$);
+                DrawMode(chan%,1);
+            endif
+            if okAnalyze%=3 then
+                mem%:=MemChan(5);
+                MemImport(mem%, chan%, 0, MaxTime());
+                gCodes%[0]:=1;
+                gCodes%[1]:=0;
+                gCodes%[2]:=0;
+                gCodes%[3]:=0;
+                MemSetItem(mem%,0,Cursor(cur%),gCodes%[]);
+                name$:=ChanTitle$(chan%);
+                ChanDelete (chan%,0);
+                MemSave(mem%,chan%, 0, 0);
+                ChanDelete(mem%, 0);
+                ChanShow(chan%);
+                ChanTitle$(chan%,name$);
+                DrawMode(chan%,1);
+            endif
+            if okAnalyze%=2 then
+                mem%:=MemChan(5);
+                MemImport(mem%, chan%, 0, MaxTime());
+                MemDeleteTime(mem%, 0, Cursor(cur%),1);
+                name$:=ChanTitle$(chan%);
+                ChanDelete (chan%,0);
+                MemSave(mem%,chan%, 0, 0);
+                ChanDelete(mem%, 0);
+                ChanShow(chan%);
+                ChanTitle$(chan%,name$);
+                DrawMode(chan%,1);
+            endif
+        until okAnalyze%=1;
+    endif
+    
+    if chankind (chan%)=2 then
+        repeat
+            okAnalyze%:=Interact("place cursor and choose edit mode", 1023,0,"Done", "Delete", "Add");
+            if okAnalyze%=3 then
+                mem%:=MemChan(2);
+                MemImport(mem%, chan%, 0, MaxTime());
+                MemSetItem(mem%,0,Cursor(cur%));
+                name$:=ChanTitle$(chan%);
+                ChanDelete (chan%,0);
+                MemSave(mem%,chan%, 0, 0);
+                ChanDelete(mem%, 0);
+                ChanShow(chan%);
+                ChanTitle$(chan%,name$);
+                DrawMode(chan%,2);
+            endif
+            if okAnalyze%=2 then
+                mem%:=MemChan(2);
+                MemImport(mem%, chan%, 0, MaxTime());
+                MemDeleteTime(mem%, 0, Cursor(cur%),1);
+                name$:=ChanTitle$(chan%);
+                ChanDelete (chan%,0);
+                MemSave(mem%,chan%, 0, 0);
+                ChanDelete(mem%, 0);
+                ChanShow(chan%);
+                ChanTitle$(chan%,name$);
+                DrawMode(chan%,2);
+            endif
+           
+        until okAnalyze%=1;
+    endif
+    
+endif
+
+CursorDelete(cur%);
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+

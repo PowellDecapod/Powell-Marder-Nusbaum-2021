@@ -1,0 +1,169 @@
+'Script to subtract stimulus artifacts from recording traces.
+
+'You need an event channel that holds the stimulus times, and an event or marker channel that holds
+'selected stimulus times. The latter should be from places where there are few or no other signals
+'but the artifact in the recording trace. An example are the first stimuli in each of repeated stimulus
+'trains. These signals are used to generate a waveform average which forms the template that is subtracted
+'from the whole recording trace at each stimulus time. A dialog window will ask you to assign these three
+'channels. 
+
+'Stimulus artifacts are typically very short. This means that they consist of few samples. For example,
+'a one millisecond stimulus artifact only consists of 10 data points if you sampled at 10 kHz. This means
+'that a shift by one sample can create a significant mismatch. Therefore, you can assign an "accuracy", i.e.
+'a higher resampling rate to avoid these shifts. You can also choose to smooth filter the chunks of waveform
+'after the subtraction. 
+
+'DISCLAIMER: This script does a lot of time-consuming processing and is very slow. It will also only work well
+'if the artifact shape does not change during repeated stimulation.
+
+'Dirk Bucher, Sept 2012
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var Timevh%;
+Timevh%:=View(); 'gets the view handle of the time view
+
+
+var waveCh%,trigCh%,aveCh%, ok%, binsz,avDur, check%,tau;
+DlgCreate("assign");
+DlgChan(1, "waveform channel: ",1);
+DlgChan(2,"stim event channel: ", 6);
+DlgChan(3, "stim select for average: ",14);
+DlgReal(4,"accuracy [kHz]:",1,100);
+DlgReal(5,"time window for average [ms]:",1,1000);
+DlgCheck(6,"Use smoothing filter");
+DlgReal(7,"filter time constant [x binsize]:",2,50);
+binsz:=50;
+avDur:=20;
+tau:=30;
+check%:=0;
+ok%:=DlgShow(waveCh%,trigCh%,aveCh%, binsz,avDur,check%, tau);
+if ok%=0 then halt endif
+binsz:=1/(binsz*1000);
+avDur:=avDur/1000;
+
+var tview;
+tview:=XHigh()-XLow();
+
+if Cursor(1) = -1 then
+    CursorNew(XLow()+tview/3,1);
+endif
+if Cursor(2) = -1 then
+    CursorNew(XHigh()-tview/3,2);
+endif
+
+var VirCh%,expr$, memch%;
+expr$:=Print$("Ch(",waveCh%,")");
+VirCh% := VirtualChan(0, ""); 'Create new virtual channel
+VirtualChan(VirCh%, expr$, 0, binsz, 0);  'Edit virtual channel
+VirtualChan(VirCh%, expr$, 0, binsz/2, 0);  'Edit virtual channel
+VirtualChan(VirCh%, expr$, 0, binsz, 0);  'Edit virtual channel
+memch%:=MemChan(0,VirCh%);
+MemImport(memch%,VirCh%,0,MaxTime());
+ChanDelete(VirCh%,0);
+
+Interact("PLACE CURSORS 1 AND 2 TO MARK WINDOW FOR AVERAGE",511,0,"OK");
+var bins%, AvVh%, cur1,cur2;
+cur1:=Cursor(1);
+cur2:=Cursor(2);
+bins%:=avDur/binsz;
+AvVh%:=SetAverage(memch%,bins%,avDur/2,aveCh%,1,3);
+FrontView(AvVh%);
+WindowVisible(3);
+Process(cur1, cur2);
+CursorNew();
+CursorNew();
+CursorNew();
+CursorNew();
+CursorLabel(4,1,"base start");
+CursorLabel(4,2,"base end");
+CursorLabel(4,3,"artifact start");
+CursorLabel(4,4,"artifact end");
+Optimise(1);
+
+Interact("PLACE CURSORS",511,0,"OK");
+var baseline, nArt%, artif[20000], chunkend, chunkstart;
+chunkstart:=BinToX(Cursor(3));
+chunkend:=BinToX(Cursor(4));
+baseline:=ChanMeasure(1,2,BinToX(Cursor(1)), BinToX(Cursor(2)));
+nArt%:=Cursor(4)-Cursor(3);
+ArrAdd(artif[],View(AvVh%, 1).[Cursor(3):nArt%]);
+ArrSub(artif[0:nArt%],baseline);
+FileClose(0,-1);
+
+FrontView(Timevh%);
+tview:=XHigh()-XLow();
+if Cursor(3) = -1 then
+    CursorNew(XLow()+tview/3,3);
+endif
+if Cursor(4) = -1 then
+    CursorNew(XHigh()-tview/3,4);
+endif
+Interact("PLACE CURSORS 3 AND 4 TO MARK WHOLE ANALYSIS WINDOW",511,0,"OK");
+var nStim%,trigger[200000], k%, wavechunk[20000], nChunk%;
+nStim%:=ChanData(trigCh%,trigger[],Cursor(3), Cursor(4));
+
+for k%:=0 to nStim%-1 step 1 do
+    ArrMul(wavechunk[],0);
+    nChunk%:=ChanData(memch%,wavechunk[],trigger[k%]+chunkstart, trigger[k%]+chunkend);
+    ArrSub(wavechunk[0:nChunk%],artif[0:nChunk%]);
+    ChanWriteWave(memch%,wavechunk[0:nChunk%],trigger[k%]+chunkstart);
+next
+
+
+
+var bins, outch%, chlist%[200], dwnsmpl, downSampleRatio%, filtered%;
+bins:=BinSize(waveCh%);
+dwnsmpl:=bins/binsz;
+downSampleRatio%:=Round(dwnsmpl);
+ChanList(chlist%[],128);
+outch%:=chlist%[1];
+
+if check%=1 then
+    filtered%:=MemChan(0,memch%);
+    MemImport(filtered%,memch%,0,MaxTime());
+    ChanProcessAdd(filtered%,1,binsz*tau);
+    
+    for k%:=0 to nStim%-1 step 1 do
+        ArrMul(wavechunk[],0);
+        ChanData(filtered%,wavechunk[],trigger[k%]+chunkstart, trigger[k%]+chunkend);
+        ChanWriteWave(memch%,wavechunk[0:nChunk%],trigger[k%]+chunkstart);
+    next
+    
+    ChanDelete(filtered%,0);
+endif
+
+ChanProcessAdd(memch%,5,downSampleRatio%);
+ChanSave(memch%,outch%);
+ChanDelete(memch%,0);
+
+
+ChanShow(outch%);
+
+var Yupper, Ylower, title$;
+Yupper:=YHigh(waveCh%);
+Ylower:=YLow(waveCh%);
+YRange(outch%,Ylower, Yupper);
+title$:=ChanTitle$(waveCh%);
+if check%=0 then
+    title$:=title$+" SUB ART";
+else
+    title$:=title$+" SUBFIL ART";
+endif
+
+ChanTitle$(outch%,title$);
+
+
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+
+

@@ -1,0 +1,130 @@
+'Script to measure the area above baseline for epsps or ejps. You need the waveform channel and an event channel that marks the times for
+'single events or bursts. Works both for single events and bursts. However, for single events I suggest using "TrigPSP", since it also returns
+'other PSP parameters. It does not matter if the event channel is generated from trigger signals or peak times etc., as long as it is consistent
+'between consecutive events. You have to type in a time range with fixed distance from every event that is used to average the voltage to obtain the baseline.
+'Then you set the time range where your signal of interest takes place. Returned is a trailing number, the time for every event in the event channel,
+'the baseline voltage for every event, and the area above baseline (in mV*ms).
+
+'Dirk Bucher, April 2002.
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+'-----------------------------------------------------------------------------------------------------------------------
+
+'gets the filename of the time view for later use in printed header line
+
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";
+
+'-------------------------------------------------------------------------------------------------------------------------
+
+var stimch%, wavech%, time1, time2, time3, time4;
+
+DlgCreate ("Analyse triggered PSP area above baseline");		'Creates a dialogue to type in your channel assignments and time windows for the analysis	
+DlgText ("Assign channels:", 1,1);
+DlgChan (1,"Waveform channel:", 1, 0, 2);		'asks for the waveform channel you want to analyse...
+DlgChan (2,"Stimulus channel:", 10, 0, 3);	'asks for the event channel you use to mark single events...
+DlgText ("Define a time window to average the baseline:", 1,5);
+DlgReal (3, "Start from stimulus [ms]", -20000,20000, 0, 6);
+DlgReal (4, "End from stimulus [ms]", -20000,20000, 0, 7);
+DlgText ("Define a time window for the response:", 1,9);
+DlgReal (5, "Start after stimulus [ms]", -20000,20000, 0, 10);
+DlgReal (6, "End after stimulus [ms]", -20000,20000, 0, 11);
+DlgText ("", 1, 12);
+time1:=5;	'presets the time windows...
+time2:=15;
+time3:=15;
+time4:=150;
+
+DlgShow (wavech%, stimch%, time1, time2, time3, time4);
+
+if stimch%<1 or wavech%<1 then		'checks if both channels are assigned.
+	Message ("No valid channel assignment!");						'if not, message pops up and...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+if time1>=time2 or time3>=time4 then	'checks if your time windows make sense...
+	Message ("Invalid time windows!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+PrintLog("DATAFILE= ",fname$,"  /  ","WAVEFORMCHANNEL= " , ChanTitle$(wavech%),"  /  ","TRIGGERCHANNEL= "	'prints header lines and title to the log window
+, ChanTitle$(stimch%)," /  " ,"START= ",cur1,"  /  ","END=", cur2);
+Printlog ("\n");
+Printlog ("#,"," stimtime [s],", " baseline [mV],", "area above baseline [mV*ms]");
+
+
+var t1, t2, t3, t4;	'converts ms to seconds (output will be ms!)...
+t1:= time1/1000;
+t2:= time2/1000;
+t3:= time3/1000;
+t4:= time4/1000;
+
+var stimulus[10000], nStim%;
+var j%;	'counter
+ 
+
+nStim%:= ChanData (stimch%, stimulus[],cur1, cur2);	'gets event times...
+
+
+for j% := 0 to nStim%-1 step 1 do		' loop through all complete cycles
+
+var baseline, area; 
+
+baseline:= ChanMeasure (wavech%, 2, stimulus[j%]+t1,stimulus[j%]+t2);	'averages voltage in time windows for baseline determination...
+
+
+area:= ((ChanMeasure (wavech%, 2, stimulus[j%]+t3,stimulus[j%]+t4))-baseline)*(time4-time3);	'averages voltage in time windows for the signal,
+'substracts the baseline and multiplies by time (that gives the area)
+
+PrintLog ("%d,%f, %f, %f\n", j%+1, stimulus[j%], baseline, area);	'prints values into log window...
+
+next
+
+
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+
+
+

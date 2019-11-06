@@ -1,0 +1,217 @@
+'"Ih_fit"
+'This script allows you to measure IV values, time constants and tail currents from multisweeps of non-leak subtracted Ih Vclamp data.
+'It will take measurements from an XY view that holds the commands and another one that holds the responses.
+'Measurements are taken from cursor positions or cursor regions. Set cursor 1 and 2 to enclose the holding potential, cursor 3 and 6 for step start and end (defaults to 0 and 10s),
+'cursor 4 and 5 to enclose the fit range, and curor 7 and 8 to enclose the rebound peak. Values are returned into the log window.
+
+'Here's what you do:
+
+' 1) From an episodic clamp experiment file, create 2 multiple sweeps XY views with "multiSweeps" from the command and the response channel.
+' 2) start script
+' 3) assign the xy files for command and response in the dialog
+' 4) If cursors are not present in the response file (or not in the right order), the script will create them and prompt you to set them to the desired positions.
+'     if you want to set them to specific precise positions (e.g., positions that you used for another file you want to compare), set them first and then run the script.
+'     set the cursor label mode to "position" and move them where you want them. The script will leave the cursors alone if all 6 are present and in the right order.
+' 5) Values are returned to the log window, and you can save them as a text file.
+
+'Dirk Bucher, April 2008.
+
+
+' get the number of views
+var nViews%;  ' will store the number of views
+var viewList%[256];  ' list of views
+const XYViewsOnlyMagicNumber := 4096;
+nViews%:=Viewlist(viewList%[],XYViewsOnlyMagicNumber);
+if nViews%<2 then
+Message("you need 2 XYviews!");
+halt
+endif
+
+' get the view titles
+var title$[256];  ' have to pre-allocate all arrays in Spike2 (stupid)
+var k%;  ' a counter
+for k% := 1 to nViews% do
+  Frontview (viewList%[k%]);
+  title$[k%]:=WindowTitle$();
+next
+
+' bring up the dialog box that lets the user choose what views to use for command, response
+DlgCreate("assign files");
+DlgList(1, "command", title$[1:nViews%]);
+DlgList(2, "response", title$[1:nViews%]);
+var ok%;  ' to store whether dialog box was ok'ed or cancelled
+var cmdTitleInd%, rspTitleInd%;  ' to store user answers
+ok% := DlgShow(cmdTitleInd%, rspTitleInd%);
+
+' make sure the dialog box wasn't cancelled
+if ok%=0 then halt endif
+
+' extract the command, response window titles
+var cmdTitle$, rspTitle$;  ' titles of the command, response windows
+cmdTitle$ := title$[cmdTitleInd%+1]; 
+rspTitle$ := title$[rspTitleInd%+1];
+
+' convert the title strings to view handles
+var cmdView%, rspView%;
+cmdView% := ViewFind(cmdTitle$);
+rspView% := ViewFind(rspTitle$);
+
+' bring the response view to the fore
+
+FrontView(rspView%);
+WindowSize(100,95);
+Window(0,0);
+
+CursorSet(0);
+CursorSet(8);
+CursorLabel(4,1,"hold");
+CursorLabel(4,2,"step start");
+CursorLabel(4,3,"fit start");
+CursorLabel(4,4,"fit end");
+cursorlabel(4,5,"step end");
+CursorLabel(4,6,"tail start");
+CursorLabel(4,7,"tail end");
+CursorLabel(4,8,"steady state");
+CursorLabelPos(1,90);
+CursorLabelPos(2,90);
+CursorLabelPos(3,90);
+CursorLabelPos(4,90);
+CursorLabelPos(5,90);
+CursorLabelPos(6,90);
+CursorLabelPos(7,90);
+CursorLabelPos(8,90);
+Cursor(2,0);
+Cursor(1,cursor(2)-200);
+Cursor(5,10000);
+
+Interact("set cursors", 384,0,"OK");
+  
+Printlog("V_hold [mV], I_hold [nA], V_step [mV], step Dur [s], I_zero [nA], I_steadyState [nA], Ih_amplitude [nA], tau [s], tail_amplitude [nA]\n");
+
+' get the data from the current view
+var x[1000000], y[1000000];
+var n%;  ' number of data points in x, y
+n% := XYGetData(1, x[], y[]);
+
+' get the duration, time-step of the data
+var t0, tf, T, dt;
+t0 := x[0];
+tf := x[n%-1];
+T := tf-t0;
+dt := T/(n%-1);
+
+' want to save the cursor times for later
+var cursorTime[8];
+for k%:=0 to 7 do
+  cursorTime[k%] := Cursor(k%+1);
+next
+
+' convert cursor x values to indices
+var cursorInd[8];  ' cursorInd[j] gives the position in the data arrays of the jth cursor
+for k%:=0 to 7 do
+  cursorInd[k%]:=Round((CursorTime[k%]-t0)/dt);
+next
+
+var cur1%,cur2%,cur3%,cur4%,cur5%,cur6%,cur7%,cur8%;
+cur1%:=cursorInd[0];
+cur2%:=cursorInd[1];
+cur3%:=cursorInd[2];
+cur4%:=cursorInd[3];
+cur5%:=cursorInd[4];
+cur6%:=cursorInd[5];
+cur7%:=cursorInd[6];
+cur8%:=cursorInd[7];
+
+FrontView(cmdView%);
+
+' get the data from the current view
+var xc[1000000], yc[1000000];
+var nc%;  ' number of data points in x, y
+nc% := XYGetData(1, xc[], yc[]);
+
+' get the duration, time-step of the data
+var t0c, tfc, Tc, dtc;
+t0c := xc[0];
+tfc := xc[nc%-1];
+Tc := tfc-t0c;
+dtc := Tc/(nc%-1);
+
+FrontView(rspView%);
+' want to save the cursor times for later
+var cursorTimec[8];
+for k%:=0 to 7 do
+  cursorTimec[k%] := Cursor(k%+1);
+next
+
+' convert cursor x values to indices
+var cursorIndc[8];  ' cursorInd[j] gives the position in the data arrays of the jth cursor
+for k%:=0 to 7 do
+  cursorIndc[k%]:=Round((CursorTimec[k%]-t0c)/dtc);
+next
+
+var cur1c%,cur2c%,cur3c%,cur4c%,cur5c%,cur6c%,cur7c%,cur8c%;
+cur1c%:=cursorIndc[0];
+cur2c%:=cursorIndc[1];
+cur3c%:=cursorIndc[2];
+cur4c%:=cursorIndc[3];
+cur5c%:=cursorIndc[4];
+cur6c%:=cursorIndc[5];
+cur7c%:=cursorIndc[6];
+cur8c%:=cursorIndc[7];
+
+var channels%[256];  ' list of channels
+var nChan%;  ' number of channels
+nChan% := ChanList(channels%[]); 
+
+var holdV, StepV, StepT, holdC, tConst, zero, amplitude, steadyState, tailpeak, tailpeakindex%,tailamp, tailwindow%;
+
+for k% := 1 to nChan% do
+    FrontView(cmdView%);
+    ArrMul(xc[],0);
+    ArrMul(yc[],0);
+    XYGetData(channels%[k%], xc[], yc[]);
+    holdV:=yc[cur1c%];
+    stepV:=yc[cur3c%];
+    FrontView(rspView%);
+    stepT:=Cursor(5)-Cursor(2);
+    ArrMul(x[],0);
+    ArrMul(y[],0);
+    XYGetData(channels%[k%], x[], y[]);
+    holdC:=y[cur1%];
+    ChanFit(channels%[k%], 0, 0);
+    ChanFit(channels%[k%], 1, 1);
+    ok%:=ChanFit(channels%[k%], 3, Cursor(3), Cursor(4));
+    if ok%<>-2 then
+        ChanFitShow(channels%[k%],3,XLow(),XHigh());
+        tConst:=ChanFitCoef(channels%[k%], 1);
+        zero:=ChanFitValue(channels%[k%],0);
+        steadyState:=ChanFitValue(channels%[k%],Cursor(8));
+        amplitude:=steadyState-zero;
+    else
+        tConst:=0;
+        zero:=0;
+        steadyState:=0;
+        amplitude:=0;
+    endif
+    tailwindow%:=cur7%-cur6%;
+    tailpeakindex%:=max(y[cur6%:tailwindow%]);
+    tailpeak:=y[cur6%+tailpeakindex%];
+    tailamp:=tailpeak-holdC;
+    Printlog(("%f,%f,%f,%f,%f,%f,%f,%f, %f\n"),holdV, holdC, StepV, stepT/1000, zero, steadyState, amplitude, tConst/1000, tailamp);
+    
+    next;
+
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+WindowSize(50,100);
+Window(50,0);
+FrontView(cmdView%);
+WindowSize(50,50);
+Window(0,0);
+FrontView(rspView%);
+WindowSize(50,50);
+Window(0,50);
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

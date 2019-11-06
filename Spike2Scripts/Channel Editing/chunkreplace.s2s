@@ -1,0 +1,35 @@
+'Script to copy a chunk of waveform from one channel and place it into another channel.
+'You have to assign a source and target channel. Then you mark the chunk in the source
+'channel with Cursors 1 and 2, and the starting point in the target channel with Cursor 3.
+
+'Dirk Bucher 2012
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, sourceCh%, targetCh%;
+
+DlgCreate("Select");
+DlgChan(1,"get chunk from: ", 529);
+DlgChan(2, "insert into:",529);
+ok%:=DlgShow(sourceCh%, targetCh%);
+if ok%<>1 then
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+var cur1, cur2;
+Interact("Place cursor 1 and 2 to mark chunk, and cursor 3 to mark replacement start", 511,0,"OK");
+cur1:=Cursor(1);
+cur2:=Cursor(2);
+
+var wavechunk[2000000],nSource%;
+nSource%:=ChanData(sourceCh%, wavechunk[],cur1,cur2);
+ChanWriteWave(targetCh%,wavechunk[0:nSource%],Cursor(3));
+
+

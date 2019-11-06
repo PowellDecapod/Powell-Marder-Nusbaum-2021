@@ -1,0 +1,111 @@
+'"SweepDiff" - script to plot the difference between two multisweep plots. For use with control/treatment episodic clamp data.
+' You need 2 xy plots as generated with "MultiSweeps". They have to come from the same experimental protocol and be equal duration.
+
+' Dirk Bucher, January 2004
+
+
+var vlist%[100], nViews%, k%, title$[100],contTitle$, treatTitle$, ok%;
+var vHCont%, vHTreat%, nChan%, chlist%[256], x[1000000], y[1000000], nDatapts%;
+var xy%, yCont[1000000], yTreat[1000000], z[1000000];
+
+nViews%:=Viewlist(vlist%[], 4096);
+if nViews%<2 then
+Message("couldn't find 2 XY views!");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+for k%:=1 to nViews% do
+  Frontview (vlist%[k%]);
+  title$[k%]:=WindowTitle$();
+next
+
+DlgCreate("assign files");
+DlgText("subtract...",3,2);
+DlgList(1, 40, title$[1:nViews%],100,3,3);
+DlgText("from...",3,4);
+DlgList(2, 40, title$[1:nViews%],100,3,5);
+DlgText("",3,6);
+
+var contTitleInd%, treatTitleInd%;
+ok%:=DlgShow(contTitleInd%, treatTitleInd%);
+contTitle$:=title$[contTitleInd%+1];
+treatTitle$:=title$[treatTitleInd%+1];
+
+if ok%=0 then
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+vHCont%:=ViewFind(contTitle$);
+vHTreat%:=ViewFind(treatTitle$);
+
+FrontView(vHCont%);
+
+nChan%:=ChanList(chlist%[]);
+nDatapts%:=XYGetData(1, x[], y[]);
+
+xy%:=FileNew(12);												'creates xy-view
+Windowtitle$("difference");
+
+for k%:=1 to nChan% do
+
+FrontView(vHCont%);
+ArrMul(yCont[:nDatapts%-1],0);
+ArrMul(z[:nDatapts%-1],0);
+XYGetData(k%, z[], yCont[]);
+
+FrontView(vHTreat%);
+ArrMul(yTreat[:nDatapts%-1],0);
+XYGetData(k%, z[], yTreat[]);
+
+ArrSub(yTreat[:nDatapts%-1],yCont[:nDatapts%-1]);
+
+Frontview(xy%);
+XYSetChan(0);																
+XYAddData((k%),x[:nDatapts%-1],yTreat [:nDatapts%-1]);				'plots xy-values
+XYDrawMode((k%),2,0);
+XYColour((k%),0);		
+XYJoin((k%),1);
+
+next
+
+var yHighDiff,yLowDiff,yHighCont,yLowCont,yHighTreat, yLowTreat, Ymax, Ymin, Xmax, Xmin;
+
+
+FrontView(vHCont%);
+xMax:=XHigh();
+xMin:=XLow();
+yHighCont:=YHigh(0);
+yLowCont:=YLow(0);
+
+FrontView(vHTreat%);
+yHighTreat:=YHigh(0);
+yLowTreat:=YLow(0);
+
+Frontview(xy%);
+yHighDiff:=YHigh(0);
+yLowDiff:=YLow(0);
+Xrange(xMin, xMax);
+Optimise(-1);
+Ymax:=Max(yHighDiff,yHighCont,yHighTreat);
+Ymin:=Min(yLowDiff,yLowCont,yLowTreat);
+Draw();
+
+Frontview(xy%);
+Yrange(0,Ymin, Ymax);
+WindowSize(50,33.33333333333);
+Window(25,66.66);
+
+FrontView(vHCont%);
+Yrange(0,Ymin, Ymax);
+WindowSize(50,33.33);
+Window(25,0);
+
+FrontView(vHTreat%);
+Yrange(0,Ymin, Ymax);
+WindowSize(50,33.33);
+Window(25,33.33);
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

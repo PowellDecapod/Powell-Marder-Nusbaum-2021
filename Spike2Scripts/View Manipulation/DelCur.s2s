@@ -1,0 +1,20 @@
+'"Delete Cursors"
+'Script for the scripts bar to delete all vertical and horizontal cursors on one mouse click.
+
+'Dirk Bucher 2002
+
+if ViewKind() = 0		'checks if the associated window is a time, result or xy view...
+or ViewKind() = 4
+or ViewKind() = 12
+then		
+   
+CursorDelete(-1);
+HCursorDelete(-1);
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+else
+Message("This isn't a time, result or xy view!");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it			
+endif

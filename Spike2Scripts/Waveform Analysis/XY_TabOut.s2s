@@ -1,0 +1,63 @@
+'"Tab out" - script to output xy views as text file with the first column holding the times, and subsequent columns holding current or voltage values.
+'Columns are separated by tabs. This is the appropriate format for Neurofit to read.
+
+'Dirk Bucher, Nov 2009
+
+var vlist%[100], nViews%, k%, title$[100],treatTitle$, ok%;
+var vHTreat%, nChan%, chlist%[256], x[1000000], y[1000000], nDatapts%;
+var xy%, yTreat[1000000], z[1000000], c%;
+
+nViews%:=Viewlist(vlist%[], 4096);
+if nViews%<1 then
+Message("you need n open XY view");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+for k%:=1 to nViews% do
+  Frontview (vlist%[k%]);
+  title$[k%]:=WindowTitle$();
+next
+
+DlgCreate("select");
+DlgList(1, "XY view:", title$[1:nViews%]);
+DlgReal(2, "y-offset:", -10000, 10000);
+
+var treatTitleInd%, offset;
+ok%:=DlgShow(treatTitleInd%, offset);
+treatTitle$:=title$[treatTitleInd%+1];
+
+if ok%=0 then
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+vHTreat%:=ViewFind(treatTitle$);
+
+FrontView(vHTreat%);
+
+nChan%:=ChanList(chlist%[]);
+nDatapts%:=XYGetData(1, x[], y[]);
+
+var M[100000][50], check%, vh%;
+ArrAdd(M[:nDatapts%][0],x[]);
+
+
+for c%:=1 to nChan% step 1 do
+    
+    ArrMul(y[],0);
+    XYGetData(c%,x[], y[]);
+    ArrAdd(M[:nDatapts%][c%],y[]);
+    if offset<>0 then
+        ArrAdd(M[:nDatapts%][c%],-offset);
+        endif
+    next
+vh%:=FileNew(1,1);
+Print ("%f",M[:nDatapts%][:nChan%]);
+
+repeat 
+   check%:=EditReplace(",","\t",0);
+   check%:=EditReplace(",","\t",0);
+    until check%<1;
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it

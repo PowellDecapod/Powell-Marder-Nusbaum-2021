@@ -1,0 +1,60 @@
+' 1spkMkburst - Script to create burst markers at single events.
+' For every event in a specified event channel a "00" marker is created in a marker channel at the time of the event, and a "01" marker 0.0001s later.
+' This script is intended to allow using burst and phase analysis scripts when one of the neurons only spikes once per cycle.
+
+'Dirk Bucher, June 2007
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+  	halt							'...if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (1) <> 0 and Cursor (2)/Cursor (1)<1 or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  		halt																		'stops the script
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+
+var input1%, input2%, output%, name$, ok1%;
+
+DlgCreate ("mkbursts");												'creates the dialog to assign channels, analysis mode
+DlgChan (1, "channel 1",2);												'(mark peaks, troughs, data rising or falling through a level).
+DlgChan (2, "New channel #",128);
+DlgString (3, "New channel name",15);
+	name$:="New bursts";							'presets
+
+ok1%:=DlgShow (input1%, output%, name$);		'show the dialog
+
+if ok1%=1 then				'if "OK" was clicked...
+var i%,nspks%,spktimes[500000], shift[500000], dummychan%, code%[4];
+code%[0]:=1;
+dummychan%:= MemChan(5);
+nspks%:=ChanData(input1%,spktimes[],cur1,cur2);
+'nspks%:=ChanData(input1%,shift[],cur1,cur2);
+'ArrAdd(shift[0:nspks%-1],0.0001);
+for i%:=0 to nspks% step 1 do
+MemSetItem(dummychan%, 0, spktimes[i%]);
+MemSetItem(dummychan%, 0, spktimes[i%]+0.0001, code%[]);
+next
+MemSave(dummychan%,output%, 0, 0);	'saves buffer channel to a real channel
+ChanDelete(dummychan%, 0);				'deletes the buffer channel
+ChanShow(output%);				'shows new channel
+ChanTitle$(output%,name$);		'names new channel
+endif

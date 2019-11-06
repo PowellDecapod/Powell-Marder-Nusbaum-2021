@@ -1,0 +1,31 @@
+'"Cursor Label Switch". Script to set the label mode of all cursors present in a time, result or xy view. Multiple call from
+'the script bar will switch between "no label", "postion only", "number only", and "position (number)".
+
+'Dirk Bucher 12/12
+
+
+if ViewKind() = 0		'checks if the associated window is a time, result or xy view...
+    or ViewKind() = 4
+    or ViewKind() = 12
+then
+    var style%;
+    style%:=CursorLabel();
+    if style%=0 then
+        CursorLabel(1);
+    endif
+    if style%=1 then
+        CursorLabel(2);
+    endif
+    if style%=2 then
+        CursorLabel(3);
+    endif
+        if style%=3 then
+        CursorLabel(0);
+    endif
+else
+    Message("This isn't a time, result or xy view!");
+endif
+
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it			
+

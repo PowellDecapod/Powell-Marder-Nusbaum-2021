@@ -1,0 +1,326 @@
+'"PRC"
+
+'Script to do phase-response analysis.
+
+'you need an event or marker channel that holds the stimulus start times and an event or marker channel that holds the cycle start times.
+'you can specify how many control cycles you want to average and which cycle after the stimulus you want as the response (default is 0, i.e. 
+'the cycle in which you stimulated).
+'the following values are returned:
+
+' - cycle# after stim
+' - # of control cycles
+' - averaged control period [s]
+' - response period [s]
+' - stimulus phase
+' - (p'-p)/p\n ((response period - averaged controlperiod)/averaged control period)
+
+'optionally, you can extend this to burst parameters. in this case, the cycle channel has to be a marker channel with
+'burststarts (00) and burstends (01) and you need an event channel that holds spike times.
+
+'this will return in addition:
+
+' - averaged control duration [ms]
+' - response duration [ms]
+' - (dur'-dur)/dur
+' - averaged #Spikes control
+' - #Spikes response
+' - spk'-spk)/spk
+' - averaged spkfreq control [Hz]
+' - spkfreq response [Hz]
+' - (freq'-freq)/freq
+
+'dirk bucher, august 2003
+'dirk bucher, november 2005, changed response period calculation for higher cycle orders.
+
+'--------------------------------------------------------------------------------------------
+
+'setting the file to process
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view
+   Message("This isn't a time view!");
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'--------------------------------------------------------------------------------------------
+'setting the analysis time:
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are  not present or not in the right order...
+																					 '	...a dialog is created to ask if you want to analyse the whole file.	
+	DlgCreate ("ATTENTION!");
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then					'if you answer "ok",...
+		cur1:= 0;					'...start and end are set to whole file									
+		cur2:= MaxTime ();
+	else								'if you answer "cancel",...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+	endif
+
+else									' if Cursor (1) and Cursor (2) are present and in the right order...
+	cur1 := Cursor(1);			'...their values are returned as start and end time.
+	cur2 := Cursor(2);
+endif
+
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+'-------------------------------------------------------------------------------------------------
+
+'dialog for channel assignment, specifying cycleorder and number of control cycles
+
+var stimch%, cyclech%, cycleorder%, control%, burstparam%;
+
+DlgCreate ("Select");
+	DlgChan (1,"stimulus channel",10);
+	DlgChan (2,"cycle channel",10);
+	DlgInteger (3,"analyze cycle# after stimulus", 0,100);
+	DlgInteger (4,"# of control cycles before stimulus", 1,100);
+	DlgText ("Optional:",2,5);
+	DlgCheck (5, "analyze burst parameters", 2, 6);	'creates a checkbox for optional burst parameter analysis
+	cycleorder%:=0;
+	control%:=3;
+	ok%:=DlgShow (stimch%, cyclech%, cycleorder%, control%, burstparam%);
+
+if stimch%<1 or cyclech%<1 or stimch% = cyclech% then		'checks if both channels are assigned and different from each other
+	Message ("No valid channel assignment!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+'-------------------------------------------------------------------------------------------------
+
+'build arrays that hold burst starts and burst ends (if cycle indicator is a marker channel)
+'or only one array that holds the burststarts (if cycle indicator is an event channel)
+
+var burststart [10000],burstend [10000], nBurststarts%;
+
+if ChanKind (cyclech%)= 5 then	'if cycle indicator is a marker channel holding burst starts and ends
+
+'puts burst starts and ends into seperate arrays:
+MarkMask(cyclech%,-1,1,-1); 'reset = include all codes
+MarkMask(cyclech%,0,-1,-1);	'set all codes off
+MarkMask(cyclech%,0,1,0);		'turn on code 0 = burst start only
+
+nBurststarts%:=ChanData(cyclech%,burststart[],cur1,cur2); 'put all burst starts into an array and count them
+
+MarkMask(cyclech%,-1,1,-1); 'reset = include all codes
+MarkMask(cyclech%,0,-1,-1);	'set all codes off
+MarkMask(cyclech%,0,1,1);		'turn on code 1=end code only
+
+ChanData(cyclech%, burstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(cyclech%,-1,1,-1);	'turn on both markers again
+
+else				'if cycle indicator is an event channel holding only burst starts or waveform peak times etc.
+
+nBurststarts%:=ChanData(cyclech%,burststart[],cur1,cur2); 'put all cycle indicators into an array and count them
+
+endif
+
+'-------------------------------------------------------------------------------------------------------------------
+
+'build array that holds the stimulus starttimes
+
+var stim[10000], nStim%;
+
+if ChanKind (stimch%)= 5 then	'if stimulus channel is a marker channel holding burst starts and ends
+
+MarkMask(stimch%,-1,1,-1); 'reset = include all codes
+MarkMask(stimch%,0,-1,-1);	'set all codes off
+MarkMask(stimch%,0,1,0);		'turn on code 0 = start only
+nStim%:=ChanData(stimch%,stim[],cur1,cur2);
+MarkMask(stimch%,-1,1,-1);	'turn on both markers again
+
+else
+
+nStim%:=ChanData(stimch%,stim[],cur1,cur2);
+
+endif
+
+
+'--------------------------------------------------------------------------------------------------------------------
+
+'create column titles and dialogs for optional assignment of spike and waveform channel
+
+var spkch%;
+
+'---------
+
+'no burst or waveform analysis
+
+if burstparam%=0 then
+PrintLog("cycle# after stim, # of control cycles, averaged control period [s], response period [s], stimulus phase, (p'-p)/p\n");
+endif
+
+'---------
+
+' burst analysis
+
+if burstparam%=1 then
+
+if ChanKind (cyclech%)<> 5 then
+
+Message ("the cycle channel has to be of marker type to analyse burst parameters!");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgChan (1,"spikechannel", 2);
+
+ok%:= DlgShow (spkch%); 'shows dialog and returns assignments
+
+if spkch%<1 then		'checks if event channel (for spikes)
+	Message ("No spike channel assignment!");					'are present. If not, or if "Cancel" is clicked,...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+PrintLog("cycle # after stim, # of control cycles, averaged control period [s], response period [s], stimulus phase, (p'-p)/p,");
+Printlog("averaged control duration [ms], response duration [ms], (dur'-dur)/dur, averaged #Spikes control, #Spikes response,");
+Printlog("(spk'-spk)/spk, averaged spkfreq control [Hz], spkfreq response [Hz], (freq'-freq)/freq\n");
+
+endif
+
+'---------------------------------------------------------------------------------------------------------------
+
+var s%, c%, e%, b%; 'counters for stimulus, cycle, burstend
+var responsefind, burstendfind; 'returnfunctions to find response cycle (burststart) and burstend
+var burstendmean, burststartmean;
+var controlperiod, responseperiod, phase, PRperiod; 'returned values
+var controldur, responsedur, PRdur, nSpkControl, nSpkResponse%, PRnSpk, controlFreq, responseFreq, PRfreq;
+var count%[1], limit%, title$, xval[1000], yval[1000], xy%;
+
+for s%:= 0 to nStim%-1 step 1 do	'start of loop
+
+'--------
+
+'find first burststart after stimulus
+
+c%:=0;
+repeat
+responsefind:=burststart[c%]-stim[s%];
+c%:=c%+1;
+
+until responsefind > 0;
+c%:=c%-1;
+
+'--------
+
+'calculate the averaged control period, the response period, the stimulus phase and (p'-p)/p
+
+controlperiod:=(burststart[c%-1]-burststart[c%-(control%+1)])/control%;
+responseperiod:=burststart[c%+cycleorder%]-(burststart[c%-1]+cycleorder%*controlperiod);
+phase:=(stim[s%]-burststart[c%-1])/controlperiod;
+PRperiod:=(responseperiod-controlperiod)/controlperiod;
+
+xval[s%]:=phase;
+yval[s%]:=PRperiod;
+ArrAdd(count%[], 1);
+
+
+'----------------------------------------------
+
+'if burst analysis is checked
+
+if burstparam%=1 then
+
+'---------------
+
+'find first burstend after burststart
+
+e%:=0;
+repeat
+burstendfind:=burstend[e%]-burststart[c%];
+e%:=e%+1;
+
+until burstendfind > 0;
+e%:=e%-1;
+
+'--------------
+
+'get burst parameters
+
+ArrSum (burststart [c%-control%-1:control%], burststartmean);
+ArrSum (burstend [e%-control%-1:control%], burstendmean);
+controldur:= burstendmean-burststartmean;
+responsedur:= burstend[e%+cycleorder%]-burststart[c%+cycleorder%];
+PRdur:=(responsedur-controldur)/controldur;
+
+nSpkControl:=Count(spkch%,burststart[c%-control%-1],burstend[e%-2])/control%; 'why e%-2?
+controlFreq:=(nSpkControl-1)/controlDur;
+nSpkResponse%:=Count(spkch%, burststart[c%+cycleorder%], burstend[e%+cycleorder%]);
+responseFreq:=(nSpkResponse%-1)/responsedur;
+PRnSpk:=(nSpkResponse%-nSpkControl)/nSpkControl;
+PRfreq:=(responseFreq-controlfreq)/controlFreq;
+
+
+
+endif
+
+
+
+
+'print values for this cycle into the log window
+
+if burstparam%=0  then 'only period analysis
+PrintLog ("%2d,%2d,%.4f,%.4f,%.4f,%.4f\n", cycleorder%, control%, controlperiod, responseperiod, phase, PRperiod);
+endif
+
+if burstparam%=1 then ' + burst analysis
+PrintLog ("%2d,%2d,%.4f,%.4f,%.4f,%.4f,", cycleorder%, control%, controlperiod, responseperiod, phase, PRperiod);
+PrintLog ("%.1f,%.1f,%.4f,%.2f,%3d,%.4f,", controldur*1000, responsedur*1000, PRdur, nSpkControl, nSpkResponse%, PRnSpk);
+PrintLog ("%.2f,%.2f,%.2f\n", controlFreq, responseFreq, PRfreq);
+endif
+
+'----------------
+
+
+next
+
+
+limit%:=ArrSum(count%[])-1;
+title$:= WindowTitle$();
+xy%:=FileNew(12);													'creates xy-view
+Frontview (ViewFind(title$));									'returns time view to the front
+
+FrontView(xy%);																'brings xy-view to the front
+XYSetChan(0);																
+XYAddData(1, xval[:limit%],yval[:limit%]);				'plots xy-values
+XYDrawMode(1,1,0);
+XYDrawMode(1,2,4);
+		
+XRange(0, 1);
+Chantitle$(0,"(p'-p)/p");
+XYColour(1,0);
+Draw();
+Optimise(-1,0,1);
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+window(0,0,100,100);
+FrontView(xy%);
+window(50,0,100,50);
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+
+
+

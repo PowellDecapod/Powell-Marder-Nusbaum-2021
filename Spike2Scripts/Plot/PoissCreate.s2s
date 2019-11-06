@@ -1,0 +1,87 @@
+'creates a new datafile with a channel that contains pulses / spikes that occur at a user-defined frequency,
+' but ISIs are randomly occurring and have a poisson distribution. 
+'Wolfgang Stein 2009
+var a,t,x,r,freq,durationinms,arrsize,binfrequ, index,mem%,arrindex,u,fillsize,title$,ret%,stimulusdura, stimulusamp;
+var mindist,maxdist,maxusedfrequ,minusedfrequ;
+
+durationinms:=300; '10 sec duration 
+freq:=10; '10 Hz main frequency
+binfrequ:=30; '10 kHz sampling frequency
+stimulusdura:=0.5; '0.5 ms duration of pulse
+stimulusamp:=5; 'amplitude of output in volts
+
+mindist:=75; 'max frequency that will be allowed in the distribution
+maxdist:=0.1; 'min frequency that will be allowed in the distribution
+'create Box and let user change these values
+DlgCreate("Poisson Data");
+DlgReal(1,"Desired duration in sec?",1,1000000);
+DlgReal(2,"Enter desired frequency in Hz", 1, 100000);
+DlgReal(3,"Enter sampling frequency in kHz", 1, 1000);
+DlgReal(4,"Enter duration of stimulus pulse in msec", 0, 1000);
+DlgReal(5,"Enter amplitude of stimulus pulse in Volts", 0, 1000);
+DlgReal(6,"max frequency that will be in the distribution", 0, 1000);
+DlgReal(7,"min frequency that will be in the distribution", 0, 1000);
+
+ret%:=DlgShow(durationinms, freq,binfrequ,stimulusdura,stimulusamp,mindist,maxdist );
+
+mindist:=1/mindist*1000; 'calculate time in ms from frequency
+maxdist:=1/maxdist*1000;
+
+durationinms:=durationinms*1000; 'in milliseconds
+
+binfrequ:=binfrequ*1000; 'calculate in Hz
+arrsize:=durationinms/1000 * binfrequ; 'define size of an array (empty memchan)
+fillsize:=stimulusdura/1000 * binfrequ; 'define size of 2nd array (stimulus array)
+
+
+'create new datafile'
+Filenew(7,1,2,2,durationinms/1000+1);
+mem%:=MemChan(1,0,1/binfrequ);
+'ChanShow(mem%);
+
+'create title for new channel
+title$:="pois_"+str$(freq)+"Hz";
+
+calculate();
+HALT;
+
+func calculate()
+var arr[arrsize*1.3],fill[fillsize]; 'create array and add safety factor of 30 %
+MemSetItem(mem%,0,0,arr[]); 'copy empty array to memchan to have flatline in memchan.
+ArrConst(fill[],stimulusamp);'fill[] array contains the stimulation voltage
+while t<durationinms do
+    x := Rand(); 'number between 0 and 1
+    r := -1000.0*ln(x)/freq;'calculate interval (ISI)
+if r>mindist and r<maxdist then     
+    t := t + round(r); ' and make it an integer.
+    
+    printlog(x,"    ",r,"    ",t,"   ",index); 'write to logfile
+    
+ 
+    MemSetItem(mem%,0,t/1000,fill[]); 'and add stimulus of "stimulusamp" amplitude and "stimulusdura" duration to memchan at appropiate time
+        
+        arr[index]:=r; 'fill array with ISIs in order to remember them later for max and min frequency used.
+        
+        index:=index+1;	'count spikes
+        
+   
+        
+endif;        
+        
+        wend;
+
+'    determine max and min used frequency  
+minusedfrequ:=max(arr[0:index]);
+minusedfrequ:=arr[minusedfrequ];
+
+maxusedfrequ:=min(arr[0:index]);
+maxusedfrequ:=arr[maxusedfrequ];
+' end determining used frequencies        
+        
+ChanSave(mem%,1); 'save memchan
+ChanTitle$(1,title$); 'and give it title
+ChanShow(1); 'show it
+ChanDelete(mem%); 'and delete memchan
+message(index," spikes were generated");
+Message("min frequency used: ",1/(minusedfrequ/1000)," max frequency used: ",1/(maxusedfrequ/1000));
+end;

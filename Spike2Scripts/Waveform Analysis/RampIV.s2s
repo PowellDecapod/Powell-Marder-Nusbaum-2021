@@ -1,0 +1,179 @@
+'RampIV
+'script to generate IV curves from VC ramp protocol data, designed for difference currents taken from control and treatment.
+
+'You need 3 result view files (e.g., from averages) holding:
+
+'1) the voltage ramp
+'2) the current response from control
+'3) the current response from treatment
+
+'The current views have to have the same sampling rate and time values.
+'The voltage ramp needs to be the same time range, but can have a different sampling rate.
+
+'You will be asked to assign the files (control I, treatment i, V ramp).
+'The script will generate the difference current.
+'You will then determine the time range from which you want an IV plot by moving cursors dropped into the Vramp window.
+'A dialog will pop up that lets you determine how many data pairs you want for an IV plot. It defaults to the number of data points present between cursors in the Vramp window.
+'The script will then generate an XY view with an IV plot and a text file with the corresponding voltage and current values.
+
+'Dirk Bucher, Oct 2011
+
+
+
+var nViews%,vlist%[200],k%,title$[200],contTitleInd%,treatTitleInd%,vrampTitleInd%,contTitle$,treatTitle$,vrampTitle$;
+var vHCont%,vHTreat%,vHVramp%, ok%;
+
+nViews%:=ViewList(vlist%[],16);   'creates a list of all open result view windows, returns the number found.
+
+if nViews%<3 then 
+    Message("couldn't find 3 result views");
+    FrontView(App(3));
+    FileClose(0);
+endif                                        'checks if there are the required 3 result views open
+
+for k%:=1 to nViews% do
+  Frontview (vlist%[k%]);
+  title$[k%]:=WindowTitle$();               'loops through open result views and puts the window titles into an array.
+next
+
+DlgCreate("assign files");                  'creates a dialog to assign the two current windows and the one voltage (ramp) window
+DlgText("subtract...",3,2);
+DlgList(1, 40, title$[1:nViews%],100,3,3);
+DlgText("from...",3,4);
+DlgList(2, 40, title$[1:nViews%],100,3,5);
+DlgText("voltage ramp:",3,6);
+DlgList(3, 40, title$[1:nViews%],100,3,7);
+DlgText("",3,8);
+
+ok%:=DlgShow(contTitleInd%, treatTitleInd%, vrampTitleInd%);     'returns the array indices of the titles
+contTitle$:=title$[contTitleInd%+1];
+treatTitle$:=title$[treatTitleInd%+1];
+vrampTitle$:=title$[vrampTitleInd%+1];                           'passes the window titles into variables
+
+if ok%=0 then                    'if "cancel" was clicked...
+    FrontView (App (3));		'...brings script to front...
+    FileClose (0);				'...and closes it
+endif
+
+vHCont%:=ViewFind(contTitle$);                           'gets the view handles of the selected windows
+vHTreat%:=ViewFind(treatTitle$);
+vHVramp%:=ViewFind(vrampTitle$);
+
+var contNpts%,yCont[100000],contBins,contFirstV,treatNpts%,yTreat[100000],treatBins,treatFirstV;
+
+FrontView(vHCont%);    'brings the control current window to the front
+contNpts%:=MaxTime();   'returns the number of data points (result view syntax!)
+ArrAdd(yCont[],View(vHCont%,1).[]);       'passes all y values into an array (result view syntax!)
+contBins:=Binsize(1);                    'returns the binsize of channel 1 (only channel)
+contFirstV:=BinToX(0);                    'returns the value of the first bin
+
+FrontView(vHTreat%);             'brings treatment current to the front
+treatNpts%:=MaxTime();            'returns the number of data points (result view syntax!)
+ArrAdd(yTreat[],View(vHTreat%,1).[]);    'passes all y values into an array (result view syntax!)
+treatBins:=Binsize(1);                   'returns the binsize of channel 1 (only channel)
+treatFirstV:=BinToX(0);                   'returns the value of the first bin
+
+if contNpts%<>treatNpts% or contFirstV<>treatFirstV then       'checks if control and treatment have the same number of values and the same start times
+    Message("unmatched result views");
+    FrontView(App(3));
+    FileClose(0);
+endif
+
+ArrSub(yTreat[:contNpts%], yCont[:contNpts%]);  'subtracts the control array from the treatment array. The treatment array now holds the difference values 
+
+var vHDiff%,x[100000], i%;
+
+for i%:=0 to contNpts%-1 step 1 do          'creates array with all time values, taken from control (same as treatment)
+    x[i%]:=contFirstV+(i%*contBins);
+next
+
+
+FrontView(vHCont%);           'brings control current view to the front
+WindowSize(50,50);             'sizes window to 50% width and 50% height (relative to total screen area)
+Window(0,0);                   'postions window in percent width and height
+
+FrontView(vHTreat%);            'brings treatment window to the front
+WindowSize(50,50);              'sizes window to 50% width and 50% height (relative to total screen area)
+Window(0,50);                   'postions window in percent width and height
+
+vHDiff%:=FileNew(12);                'creates new XY view window
+WindowTitle$("Difference current");   'assigns title for new XY window
+XYAddData(1,x[:contNpts%],yTreat[:contNpts%]); 'Adds the x values (time) and y values
+Optimise();                          'optimizes y-range
+XRange(x[0],x[contNpts%-1]);          'optimizes x-range
+XYDrawMode(1,2,0);                     'assigns dot and line styles
+XYJoin(1,1);                           'joins the dots with lines
+FrontView(vHDiff%);                     'brings difference current window to the front
+WindowSize(50,50);                      'sizes window to 50% width and 50% height (relative to total screen area)
+Window(50,0);                           'postions window in percent width and height
+
+FrontView(vHVramp%);                    'brings voltage ramp window to the front
+WindowSize(50,50);                      'sizes window to 50% width and 50% height (relative to total screen area)
+Window(50,50);                           'postions window in percent width and height
+CursorDelete(-1);                        'deletes all vertical cursors that may be present
+CursorNew(Maxtime()/3,1);                'creates Cursor 1 at 1/3 of the maxtime
+CursorNew((Maxtime()/3)*2,2);             'creates Cursor 2 at 2/3 of the maxtime
+CursorLabel(4,1,"start");                 'labels cursor 1 as "start"
+CursorLabel(4,2,"end");                   'labels cursor 2 as "end"
+CursorLabelPos(1,90);                      'sets the cursor label position to 90% in x.
+CursorLabelPos(2,90);                      'sets the cursor label position to 90% in x.
+
+var rampstartbin%, rampendbin%, ramprange%, rampNPoints%,nPairs%, ok2%;
+
+Interact("Set Cursors",0,0);                'lets user interact to set cursor position in the vramp window and then click "ok" in the interact toolbar
+rampstartbin%:=Round(Cursor(1));                    'returns bin number of cursor 1 position, BEWARE THAT JUST PASSING A REAL NUMBER INTO AN INTEGER VARIABLE DOESN"T ROUND CORRECTLY!
+rampendbin%:=Round(Cursor(2));                       'returns bin number of cursor 2 position
+ramprange%:=rampendbin%-rampstartbin%;         'returns number of bins between cursors
+rampNPoints%:=MaxTime();                        'returns total number of bins in window
+
+DlgCreate("Assign");                              'creates dialog
+DlgInteger(1,"# of data pairs: ",0,100000);        'lets you assign the desired number of data points for the IV plot
+nPairs%:=ramprange%;                                'defaults to the number of data points in the Vramp file between cursors
+ok2%:=DlgShow(nPairs%);
+if ok2% <>1 then
+    halt
+endif
+
+
+var downX[100000], downY[100000], newvH%, yRamp[100000], nTotal%, yRampdown[100000], vHPlot%, ystartbin%;
+
+nTotal%:=Round(rampNPoints%*nPairs%/ramprange%);                    'calculates what the number of data points for the entire file time would be at the resolution determined in the dialog 
+ystartbin%:=Round(rampstartbin%*nTotal%/rampNPoints%);               'calculates where the starting bin number is at the new resolution
+ArrSpline(downy[:nTotal%],yTreat[:contNpts%]);                       'passes the difference current data into a new array with the desired number of data points, using a spline function to interpolate
+ArrAdd(yRamp[],View(vHVramp%,1).[]);                                 'gets all voltage values from the ramp window (entire file)
+ArrSpline(yRampdown[:nPairs%],yRamp[rampstartbin%:ramprange%]);       'passes the voltage values from between cursors into new array with the desired number of data points, using a spline function to interpolate
+
+vHPlot%:=FileNew(12);                                                 'creates a new XY view window...
+WindowTitle$("IV plot");                                               '...and names it
+XYAddData(1,yRampdown[:nPairs%],downy[ystartbin%:nPairs%]);            'adds the ramp voltage values and difference current values from between cursors with the desired "n"
+Optimise();
+FrontView(vHPlot%);
+WindowSize(50,50);
+Window(0,0);
+
+Var MatOut[100000][2];                                    'creates a matrix (two-dimensional array) with two columns
+ArrAdd(MatOut[][0],yRampdown[:nPairs%]);                   'passes voltage values into column 1  (0)
+ArrAdd(MatOut[][1],downy[ystartbin%:nPairs%]);              'passes current values into column 2 (1)
+
+var vHText%;
+vHText%:=FileNew(1);                                           'creates new text file...
+WindowTitle$("Text Out");                                       '...and names it
+Print("V[mV],I[nA]\n");                                        'prints column names
+Print(MatOut[:nPairs%][]);                                      'prints voltage and current values
+FrontView(vHText%);
+WindowSize(50,50);
+Window(0,50);
+FrontView (App (3));			'brings script to the front...
+FileClose (0);					'...and closes it
+
+
+
+
+
+
+
+
+
+
+
+

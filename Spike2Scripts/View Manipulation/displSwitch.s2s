@@ -1,0 +1,60 @@
+'"Display Switch"
+'Script to switch between the default view with small "Times" font and views with increasingly larger "Arial" font. In the large font views all channel
+'numbers and labels are removed and the x axis is switched to scale bar mode. Useful for copy/paste into a graphics program.
+
+'Dirk Bucher 2003.
+
+'In spike 6, "Fontset" always sets everything to italics. Nothing I can do about it. Dirk Bucher, June 2007.
+
+if ViewKind() = 0
+or ViewKind() = 4
+or ViewKind() = 12
+then
+var  name$, size, style%;
+
+    FontGet(name$, size, style%);
+    size:=Round(size);
+
+    if name$<>"arial" and name$<>"Times New Roman"
+        or size<>24 and size <>18 and size <>14 and size<>8
+        or name$="arial" and size=24 then
+
+Fontset("Times New Roman", 8, 0);
+YAxisMode(0);
+XAxisMode(0);
+ChanNumbers(1);
+endif
+    
+if name$="Times New Roman" then
+Fontset("arial", 14, 2);
+YAxisMode(0);
+XAxisMode(0);
+ChanNumbers(1);
+    endif
+    
+    if size=14 then
+        Fontset("arial", 18, 2);
+        YAxisMode(7);
+        XAxisMode(33);
+        ChanNumbers(0);
+    endif
+    if size=18 then
+        Fontset("arial", 24, 2);
+        YAxisMode(7);
+        XAxisMode(33);
+        ChanNumbers(0);
+
+        endif
+
+        
+    
+        
+    
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+else
+Message("This isn't a time, result or xy view!");
+FrontView (App (3));		'bring script to the front...
+FileClose (0);				'...and close it
+endif

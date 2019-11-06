@@ -1,0 +1,204 @@
+'"missed bursts"
+
+'Script to check the regularity of alternation of two bursting neurons. Returns normal burststatistics (as in "burststat") for a reference channel and in
+'addition returns the number of bursts of a second channel in each reference cycle. You need a reference burstchannel (as created by "mkbursts"), a reference
+'spikechannel and an additional burstchannel.
+
+'dirk bucher, november 2002.
+'bug fix 06/09/03	--> spkfreq in burst is now calculated as nspk-1/dur
+
+
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order....
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Analyse whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'-------------------------------------------------------------------------------------------------
+var vh%, items%;
+vh%:=View(); 'gets the view handle of the time view
+Frontview (LogHandle ()); 'bring log window to the front
+items%:=EditSelectAll(); 'checks if there is anything in the log window
+Frontview(vh%); 'sets view back to time view
+'-------------------------------------------------------------------------------------------------
+
+var spkch%,burstch%, otherburstch%, reflabel$, label$, corrT%, corrB%, Tadd, dummyT, dummyB%, burst%;
+var j%;	'counter
+var burststart[100000], burstend [100000], nburststart%, nburstend%, otherNburststart%, otherburststart[100000], otherburstend[10000];
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$+".smr";		'gets the filename of the time view
+
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgChan (1,"reference spikechannel", 2);
+DlgChan (2,"reference burstchannel", 8);
+DlgChan (3,"other burstchannel", 8);
+DlgString(4, "Reference channel label", 20);		'creates a field to type in the name of the reference neuron that will appear in the column headers of the print output
+DlgString(5, "Channel label", 20);					'creates a field to type in the name of the neuron that will appear in the column headers of the print output
+DlgText ("Optional:",2,6);
+DlgCheck (6, "Relative time correction", 2, 7);	'creates a checkbox for optional correction of relative time codes
+DlgCheck (7, "Burst# correction", 2, 8);		'creates a checkbox for optional correction of burst numbers
+reflabel$:="neuron A";							'preset for reference label
+label$:="neuron B";								'preset for label
+
+ok%:= DlgShow (spkch%,burstch%,otherburstch%,reflabel$, label$, corrT%, corrB%); 'shows dialog and returns assignments
+
+if spkch%<1 or burstch%<1 or otherburstch%<1 then		'checks if event channel (for spikes) and marker channels (for bursts)
+	Message ("No valid channel assignment!");					'are present. If not, or if "Cancel" is clicked,...
+	FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+
+if	corrT%+corrB%=0 then				'identifies the case where no optional box was checked.
+	Tadd:= -cur1;					'sets time correction to substracting cursor 1 value 
+	burst%:= 0;						'sets burst correction to 0
+	if cur1=0 then
+		Message ("No relative time correction!");
+	else
+		Message ("Cursor (1) time substracted!");
+	endif
+else
+	if corrT%+corrB%=2 then			'if both boxes are checked
+ 		DlgCreate ("Relative time and burst# correction"); 'creates dialog to assign correction values
+		DlgReal (1, "Add time [s]:", -72000, 72000);
+		DlgInteger (2,"Add bursts: ", -10000, 10000 );
+		dummyT:=1000; 'presets time correction to 1000s
+		DlgShow (dummyT, dummyB%);
+		if dummyT=0 then	'if cancel is clicked or time correction=0
+			Tadd:= -cur1;		'sets time correction to substracting cursor 1 value
+			burst%:= dummyB%;	'sets burst correction to whatever was assigned (including 0 if cancel was clicked)
+			if cur1=0 then
+				Message ("No relative time correction!");
+			else
+				Message ("Cursor (1) time substracted!");
+			endif
+
+		else
+			Tadd:=dummyT;		'sets time correction to whatever was assigned 
+			burst%:= dummyB%;		'sets burst correction to whatever was assigned
+		endif
+	else
+		if corrT%=1 and corrB%=0 then		'if only time correction was checked
+			DlgCreate ("Relative time and burst# correction"); 'creates dialog for only time correction
+			DlgReal (1, "Add time [s]:", -72000, 72000);
+			dummyT:=1000; 'presets time correction to 1000s
+			DlgShow (dummyT);
+			if dummyT=0 then	'if time correction returned 0 (or was canceled)
+				Tadd:= -cur1;	'sets time correction to default
+				if cur1=0 then
+					Message ("No relative time correction!");
+				else
+					Message ("Cursor (1) time substracted!");
+				endif
+			else
+				Tadd:=dummyT; 'sets time correction to whatever was assigned
+			endif
+		else							'if only burst correction was checked
+			DlgCreate ("Relative burst correction"); 'creates dialog for only burst correction 
+			DlgInteger (1,"Add bursts: ", -10000, 10000);
+			DlgShow (dummyB%);
+			burst%:= dummyB%;		'sets burst correction to whatever was assigned
+		endif
+	endif
+endif
+
+PrintLog("DATAFILE= ",fname$,"  /  ","REFERENCE SPIKECHANNEL= " , ChanTitle$(spkch%),"  /  ","REFERENCE BURSTCHANNEL= " , ChanTitle$(burstch%),"  /  ","BURSTCHANNEL= " , ChanTitle$(otherburstch%),"  /  ","START= ",cur1,"  /  ","END=", cur2);
+'prints header to log window
+
+PrintLog("\n");	'new line
+PrintLog("%s%s,",reflabel$," burst, startT [s], endT [s], relative startT [s], relative endT [s], cycle period [s]");
+PrintLog("inst burstfreq [Hz],",reflabel$," duration [s],",reflabel$," dutycycle,",reflabel$," interburst interval [s],",reflabel$," #spikes ,",reflabel$," spikefreq in burst [Hz],",label$," bursts\n");
+'prints column titles to log window
+
+'puts burst starts and ends into seperate arrays:
+MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+MarkMask(burstch%,0,-1,-1);	'set all codes off
+MarkMask(burstch%,0,1,0);		'turn on code 0 = burst start only
+
+nburststart%:=ChanData(burstch%, burststart [], cur1, cur2); 'put all burst starts into an array
+
+MarkMask(burstch%,-1,1,-1); 'reset = include all codes
+MarkMask(burstch%,0,-1,-1);	'set all codes off
+MarkMask(burstch%,0,1,1);		'turn on code 1=end code only
+
+ChanData(burstch%, burstend[], cur1, cur2); 'put all burst ends into an array
+
+MarkMask(burstch%,-1,1,-1);	'turn on both markers again
+
+MarkMask(otherburstch%,-1,1,-1); 'reset = include all codes
+MarkMask(otherburstch%,0,-1,-1);	'set all codes off
+MarkMask(otherburstch%,0,1,0);		'turn on code 0 = burst start only
+
+var spktime[2000]; 'array holding spike times
+
+for j% := 0 to nburststart%-2 step 1 do 'loop through all bursts
+
+	var period, burstfreq, duration, dutycycle, nSpikes%, meanrate, endtime, relstart, relend, interburst, failindex%;
+
+	period := burststart [j%+1]-burststart [j%];
+
+	if burstend [j%] > burststart [j%] then 	'if analysis begins with a burststart
+
+		duration:=burstend [j%]-burststart [j%];
+		nSpikes%:=ChanData(spkch%,spktime[],burststart [j%],burstend [j%]);
+		failindex%:=ChanData(otherburstch%,otherburststart[],burststart [j%],burststart [j%+1]);
+		endtime:= burstend [j%];
+		interburst:=burststart [j%+1]-burstend[j%];
+	else										'if analysis begins with a burst end. find next burst end: (j%+1)
+
+		duration:=burstend [j%+1]-burststart [j%];
+		nSpikes%:=ChanData(spkch%,spktime[],burststart [j%],burstend [j%+1]);
+		failindex%:=ChanData(otherburstch%,otherburststart[],burststart [j%],burststart [j%+1]);
+		endtime:= burstend [j%+1];
+		interburst:=burststart [j%+1]-burstend[j%+1];
+	endif
+
+	burstfreq:= 1/period;
+	dutycycle:=duration/period;
+	meanrate:=(nSpikes%-1)/duration;
+	relstart:= burststart [j%]+Tadd;
+	relend:= endtime+Tadd;
+	PrintLog("%3d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%3d,%f,%3d\n", j%+1+burst% , burststart [j%], endtime, relstart, relend, period , burstfreq, duration , dutycycle , interburst, nSpikes% ,meanrate,failindex%);
+	'prints values to log window
+
+next
+
+
+Printlog ("\n"); 'add empty line
+Frontview (LogHandle ()); 'bring log window to the front
+if items%>2 then
+Message("Warning! Log window was not empty before starting the script!");
+endif
+Message ("Last burst is omitted!");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+

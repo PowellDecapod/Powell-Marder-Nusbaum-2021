@@ -1,0 +1,197 @@
+'Repeated File Merge. Script to create a new file that holds event and waveform channels from two source files that were recorded with matching stimulus patterns.
+'You need to have 2 open data files and assign them. File 1 channels will end up with lower channel numbers in the new file.
+'The script will ask you to hide all unwanted channels. All waveform and event channels that are visible will be copied into the new file.
+'For both files, you need to assign a reference event channel. These are the channels with matching patterns (e.g., from a repeated stimulus trace).
+'The script then drops a cursor into each file and asks you to move it to a position right before a reference data point of your choice in the event channel.
+'This reference point should be the same in both files, but may be at a different time. The script will move the cursors to the reference data point automatcally.
+'When the cursor positions are confirmed, a new (unnamed and unsaved) file is created that holds the channels from both source files, aligned at the reference
+'points. You can now for example use virtual channels calculations with the waveform channels from the two different source files.
+
+'Dirk Bucher, April 2013
+
+var nViews%,vlist%[100], k%, title$[100];
+nViews%:=Viewlist(vlist%[], 1);
+if nViews%<2 then
+Message("couldn't find 2 time views!");
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+endif
+
+for k%:=1 to nViews% do
+  Frontview (vlist%[k%]);
+  title$[k%]:=WindowTitle$();
+next
+
+var ok%,file1TitleInd%, file2TitleInd%, file1Title$, file2Title$, vH1%, vH2%;
+DlgCreate("assign files");
+DlgList(1, 40, title$[1:nViews%],100);
+DlgList(2, 40, title$[1:nViews%],100);
+ok%:=DlgShow(file1TitleInd%,file2TitleInd%);
+if ok%=0 then
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+file1Title$:=title$[file1TitleInd%+1];
+file2Title$:=title$[file2TitleInd%+1];
+vH1%:=ViewFind(file1Title$);
+vH2%:=ViewFind(file2Title$);
+var cur1%, cur2%;
+FrontView(vH1%);
+WindowSize(100,50);
+Window(0,0);
+FrontView(vH2%);
+WindowSize(100,50);
+Window(0,50);
+Interact("hide unwanted channels", 255,0,"OK");
+var refch1%, refch2%;
+FrontView(vH1%);
+DlgCreate("assign");
+DlgChan(1,"reference channel:",2);
+ok%:=DlgShow(refch1%);
+if ok%=0 then
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+cur1%:=CursorNew();
+CursorLabel(4,cur1%,"reference");
+FrontView(vH2%);
+DlgCreate("assign");
+DlgChan(1,"reference channel:",2);
+ok%:=DlgShow(refch2%);
+if ok%=0 then
+   FrontView (App (3));		'brings script to front...
+	FileClose (0);				'...and closes it
+endif
+cur2%:=CursorNew();
+CursorLabel(4,cur2%,"reference");
+
+var refT1,refT2, TDiff,viewstart, viewend, upt, maxT, startT1, startT2;
+repeat
+    Interact("move ref cursors to just before ref events", 255,0,"OK");
+    FrontView(vH1%);
+    Cursor(cur1%,NextTime(refch1%,Cursor(cur1%)));
+    refT1:=Cursor(cur1%);
+    upt:=FileTimeBase();
+    FrontView(vH2%);
+    Cursor(cur2%,NextTime(refch2%,Cursor(cur2%)));
+    refT2:=Cursor(cur2%);
+    if refT1<refT2 then
+        TDiff:=refT2-refT1;
+        startT1:=TDiff;
+        startT2:=0;
+        FrontView(vH1%);
+        viewstart:=XLow();
+        viewend:=XHigh();
+        FrontView(vH2%);
+        XRange(viewstart+TDiff,viewend+TDiff);
+    endif
+    if refT2<refT1 then
+        TDiff:=refT1-refT2;
+        startT1:=0;
+        startt2:=TDiff;
+        FrontView(vH2%);
+        viewstart:=XLow();
+        viewend:=XHigh();
+        FrontView(vH1%);
+        XRange(viewstart+TDiff,viewend+TDiff);
+    endif
+    if refT1=refT2 then
+        TDiff:=0;
+        startT1:=0;
+        startT2:=0;
+        FrontView(vH1%);
+        viewstart:=XLow();
+        viewend:=XHigh();
+        FrontView(vH2%);
+        XRange(viewstart,viewend);
+    endif
+    ok%:=interact("cursor positions OK or redo?",255,0,"OK","REDO");
+until
+ok%=1;
+
+var vHnew%,ChList1%[20],ChList2%[20],nCh1%, nCh2%,data[12000000], nDtPts%,int, type%, mCh1%;
+var name$,scale, units$, n%, newCh%;
+vHnew%:=FileNew(7,0,upt,1, maxT);
+FrontView(vH1%);
+nCh1%:=ChanList(ChList1%[],2051);
+for k%:=1 to nCh1% step 1 do
+    int:=BinSize(ChList1%[k%]);
+    nDtPts%:=ChanData(ChList1%[k%],data[],0,MaxTime());
+    type%:=ChanKind(ChList1%[k%]);
+    name$:=ChanTitle$(ChList1%[k%]);
+    if type%=1 then
+        scale:=ChanScale(ChList1%[k%]);
+        units$:=ChanUnits$(ChList1%[k%]);
+    endif
+    FrontView(vHnew%);
+    if type%=1 then
+        mCh1%:=MemChan(type%,0,int);
+        ChanScale(mCh1%,scale);
+        ChanUnits$(mCh1%,units$);
+        MemSetItem(mCh1%,0,startT1,data[0:nDtPts%-1]);
+        ChanTitle$(mCh1%,"f1_"+name$);
+    endif
+    if type%=2 then
+        mCh1%:=MemChan(type%);
+        ChanUnits$(mCh1%,units$);
+        for n%:=0 to nDtPts%-1 step 1 do
+            MemSetItem(mCh1%,0,data[n%]+startT1);
+        next
+        ChanTitle$(mCh1%,"f1_"+name$);
+    endif
+    newCh%:=ChanSave(mCh1%,0);
+    ChanShow(newCh%);
+    ChanDelete(mCh1%);
+    Optimise();
+    FrontView(vH1%);
+    CursorDelete(cur1%);
+next
+
+        
+FrontView(vH2%);
+nCh2%:=ChanList(ChList2%[],2051);
+
+for k%:=1 to nCh2% step 1 do
+    int:=BinSize(ChList2%[k%]);
+    nDtPts%:=ChanData(ChList2%[k%],data[],0,MaxTime());
+    type%:=ChanKind(ChList2%[k%]);
+    name$:=ChanTitle$(ChList2%[k%]);
+    if type%=1 then
+        scale:=ChanScale(ChList2%[k%]);
+        units$:=ChanUnits$(ChList2%[k%]);
+    endif
+    FrontView(vHnew%);
+    if type%=1 then
+        mCh1%:=MemChan(type%,0,int);
+        ChanScale(mCh1%,scale);
+        ChanUnits$(mCh1%,units$);
+        MemSetItem(mCh1%,0,startT2,data[0:nDtPts%-1]);
+        ChanTitle$(mCh1%,"f2_"+name$);
+    endif
+    if type%=2 then
+        mCh1%:=MemChan(type%);
+        ChanUnits$(mCh1%,units$);
+        for n%:=0 to nDtPts%-1 step 1 do
+            MemSetItem(mCh1%,0,data[n%]+startT2);
+        next
+        ChanTitle$(mCh1%,"f2_"+name$);
+    endif
+    newCh%:=ChanSave(mCh1%,0);
+    ChanShow(newCh%);
+    ChanDelete(mCh1%);
+    FrontView(vH2%);
+    CursorDelete(cur2%);
+next
+
+FrontView(vHnew%);
+XRange(viewstart, viewend);
+Optimise();
+WindowVisible(3);
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
+    
+
+
+

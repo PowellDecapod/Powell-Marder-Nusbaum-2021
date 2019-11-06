@@ -1,0 +1,157 @@
+
+'"TrigEMF" - "triggered enhanced metafile output"
+
+'Script to automatically output metafiles from time windows around a trigger event channel in a time view.
+'You need an event channel that will trigger the time window around it to be exported as a metafile.
+'You specify a duration and an offset (pretrigger time). A sequence of metafiles is saved.
+'The file sequence will be named by a specified file name (the dialog default is the name of the source .smr file) and a
+'running number. Example:
+		' timeview_001.wmf
+		' timeview_002.wmf
+		' timeview_003.wmf
+		'     .
+		'     .
+		'     .
+		' timeview_n.wmf
+' Files are saved as .emf (Enhanced Meta File) by default, but you have the option to save .wmf (Windows Meta File) instead
+'(checkbox in the dialog).
+'By default, the file sequence is saved to the current directory. To change directories, check box in the dialog.
+'To facilitate identification when you import the files into a graphics program, an empty channel is created that holds the running
+'number as the channel title. This channel is automatically deleted after each export. Also, the font size will be enlarged and switched to
+'ARIAL in the metafiles and the channel titles and numbers will be switched off.
+'CAUTION! The metafile size depends on the screen resolution and the preference settings. I recommend going to Edit/Edit preferences/Display and
+'setting "metafile output resolution for image export" to either "same as screen image" or "screen image x 2". Otherwise the files become too large.
+'You can also set line thickness in the preferences/display menu. I recommend "1" for data and "2" for axes.
+'Metafiles are kind of painful to handle in batches with any graphics program. I recommend getting some image file conversion software and batch convert
+'everything into Tiffs or JPEGs before processing further.
+
+'Dirk Bucher, January 2005
+
+
+'---------------------------------------------------------------------------------
+if ViewKind() <> 0 then		'checks if the associated window is a time view...
+   Message("This isn't a time view!");
+	halt							'if not, script is stopped
+endif
+
+WindowVisible (3);		'sets the time view to the front
+
+'---------------------------------------------------------------------------------
+var ok%, cur1, cur2, wholefile%;	'sets variable expressions	
+
+if Cursor (2)<Cursor (1) or Cursor (1)=-1 or Cursor (2)=-1 then ' if Cursor (1) and Cursor (2) are not present or not in the right
+																						'order...
+
+	DlgCreate ("ATTENTION!");			
+	DlgText ("Cursor (1) and (2) not set correctly.",2,1);
+	DlgLabel	(1, "Process whole file?",2,2);								'...choose if you want to analyse the whole file
+	ok%:=DlgShow (wholefile%);
+
+	if ok%=1 then																	'sets analysis to whole file or...
+		cur1:= 0;														
+		cur2:=MaxTime ();
+	else
+  	halt																	'stops the script
+	endif
+
+else
+	cur1 := Cursor(1);															'if present and in the right order, get cursor times	
+	cur2 := Cursor(2);
+endif
+'-----------------------------------------------------------------------
+var fname$,fend$;						
+fname$:=FileName$(3);							
+fend$:=FileName$(4);
+fname$:=fname$+fend$;		'gets the filename of the time view
+'--------------------------------------------------------------------------
+
+var name$,chk%,triggerch%,dur, offset, dir%, ok2%;
+
+DlgCreate ("Select");		'creates a dialog to assign channels 
+DlgString (1,"output file names: ",20);
+DlgCheck (2,"use enhanced metafile (EMF) format");
+DlgChan (3,"triggerchannel: ", 2);
+DlgReal (4,"duration [s]: ", 0,1000);
+DlgReal (5,"offset [s]: ", 0,1000);
+DlgCheck (6,"change directory to save files");
+name$:=fname$;
+dur:=30;
+offset:=5;
+chk%:=1;
+
+DlgShow (name$,chk%,triggerch%,dur, offset,dir%); 'shows dialog and returns assignments
+
+if triggerch%<1 then		'checks if event channel is present. If not, or if "Cancel" is clicked,...
+	halt																	'script is stopped
+endif
+
+if dir%=1 then
+ok2%:=FilePathSet("");
+endif
+if dir%=1 and ok2%<>0 then
+  halt
+endif
+
+'---------------------------------------------------------------------------------
+var ext$;
+
+'identifies if the output files should be WMF or EMF
+if chk%=1 then
+ext$:=".emf";
+else
+ext$:=".wmf";
+endif
+
+
+'---------------------------------------------------------------------------------
+var nTrigg%,trigger[1000],j%,count$,name2$,mem%;
+
+nTrigg%:=ChanData(triggerch%, trigger [], cur1, cur2); 'put all trigger event times into an array and count the total number
+
+'---------------------------------------------------------------------------------
+'check if the first and last windows can be drewn with the specified duration and offset
+if trigger[j%]-offset<0 or trigger[nTrigg%-1]-offset+dur>MaxTime() then
+Message("First or last time window is out of range");
+halt
+endif
+'---------------------------------------------------------------------------------
+		
+Fontset("arial", 18, 2);	'sets the font size and type to bold arial 14
+ChanNumbers(0);				'switches off the channel numbers
+YAxisMode(6);					'switches off y-axis units and small tick marks
+XAxisMode(33);					'sets x-axis to scale bar mode
+'---------------------------------------------------------------------------------
+for j% := 0 to nTrigg%-1 step 1 do 'loop through all trigger events
+mem%:=MemChan(5);					'creates a new buffer channel, event type
+
+'adds appropriate number of zeros to the trigger counter, so that the running number will always be 3 digits (_001, _010, _100)
+if j%+1<10 then
+count$:=Str$(j%+1);
+count$:="00"+count$;
+endif
+if j%+1<100 and j%+1>9 then
+count$:=Str$(j%+1);
+count$:="0"+count$;
+endif
+if j%+1>99 then
+count$:=Str$(j%+1);
+endif
+
+ChanTitle$(mem%,count$);	'sets the counter channel name to the running number
+ChanShow(mem%);				'sets counter channel to visible
+Draw(trigger[j%]-offset, dur);	'draws time window around the trigger with duration and offset as specified
+name2$:=name$+"_"+count$+ext$;	'specifies metafile name
+FileSaveAs(name2$, 5);				'saves metafile
+ChanDelete(mem%, 0);				'deletes the buffer channel
+
+next		'goes to next step in the loop
+'---------------------------------------------------------------------------------
+
+YAxisMode(0);		'turns y-axis units back on
+XAxisMode(0);		'resets x-axis mode
+ChanNumbers(1);	'turns channel numbers back on
+Fontset("Times", 8, 0);	'resets font size and style
+FrontView (App (3));		'brings script to front...
+FileClose (0);				'...and closes it
+
+
